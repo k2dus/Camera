@@ -316,7 +316,7 @@ const char *tcs34725_detect_color_from_raw(const tcs34725_raw_data_t *data) {
     float green_pct = (float)data->g / data->c;
     float blue_pct = (float)data->b / data->c;
 
-    if (red_pct * 0.8f > green_pct && red_pct * 0.7f > blue_pct) {
+    if (red_pct > green_pct && red_pct > blue_pct) {
         return "RED";
     }
     if (green_pct * 0.9f > red_pct && green_pct * 0.7f > blue_pct) {

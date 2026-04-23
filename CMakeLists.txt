@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Camera main.c servo.c colorsensor.c hcsr04.c)
+add_executable(Camera main.c Camera.c servo.c colorsensor.c hcsr04.c ak8963.c mpu6050.c mpu9250.c compass.c encoder.c motornoencoder.c)
 
 pico_set_program_name(Camera "Camera")
 pico_set_program_version(Camera "0.1")
@@ -54,6 +54,7 @@ target_include_directories(Camera PRIVATE
 # Add any user requested libraries
 target_link_libraries(Camera 
         hardware_i2c
+    hardware_spi
     hardware_pwm
         )
 

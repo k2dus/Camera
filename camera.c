@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <math.h>
+#include <stdint.h>
 #include <string.h>
+
+#include "camera.h"
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
@@ -11,10 +14,10 @@
 #define SPI_PORT spi0           // SPI channel 0 (camera data)
 #define I2C_PORT i2c0           // I2C channel 0 (camera config)
 
-#define PIN_SCK  2              // SPI clock
+#define PIN_CS   5              // SPI chip select (enable/disable camera)
 #define PIN_MOSI 3              // SPI data out (Pico → Camera)
 #define PIN_MISO 4              // SPI data in (Camera → Pico)
-#define PIN_CS   5              // SPI chip select (enable/disable camera)
+#define PIN_SCK  2              // SPI clock
 
 #define PIN_SDA  8              // I2C data
 #define PIN_SCL  9              // I2C clock
@@ -22,17 +25,63 @@
 #define CAM_I2C_ADDR 0x30       // Camera I2C address
 #define WIDTH 320               // image width in pixels
 #define HEIGHT 240              // image height in pixels
-#define CROP_HEIGHT (HEIGHT / 2) // only use middle half of frame (120 pixels high)
-#define START_ROW ((HEIGHT - CROP_HEIGHT) / 2) // start at row 60
+#define PIXEL_COUNT (WIDTH * HEIGHT)
 #define MIN_BLOB_AREA 500       // minimum connected pixels to treat as a blob
-
-#define REBOOT_BUTTON 16        // GPIO pin for reboot button
+#define MIN_BALL_BLOB_AREA 900  // stricter minimum for RGB balls
 
 // ===== MEMORY BUFFERS =====
-uint8_t frame_buffer[WIDTH * CROP_HEIGHT * 2];  // raw frame data from camera (RGB565 = 2 bytes/pixel)
-uint8_t mask_buffer[WIDTH * CROP_HEIGHT];       // mask: 255=color match, 0=no match
-uint16_t queue_x[WIDTH * CROP_HEIGHT];          // BFS queue: x coordinates
-uint16_t queue_y[WIDTH * CROP_HEIGHT];          // BFS queue: y coordinates
+uint8_t mask_buffer[PIXEL_COUNT];  // mask: 255=color match, 0=no match
+uint8_t hue_buffer[PIXEL_COUNT];   // quantized hue for matched pixels (h/2)
+uint16_t queue_x[PIXEL_COUNT];     // BFS queue: x coordinates
+uint16_t queue_y[PIXEL_COUNT];     // BFS queue: y coordinates
+
+static bool sensor_write_reg(uint8_t reg, uint8_t value) {
+    uint8_t buf[2] = {reg, value};
+    return i2c_write_blocking(I2C_PORT, CAM_I2C_ADDR, buf, 2, false) == 2;
+}
+
+static bool sensor_read_reg(uint8_t reg, uint8_t *value) {
+    if (i2c_write_blocking(I2C_PORT, CAM_I2C_ADDR, &reg, 1, true) != 1) {
+        return false;
+    }
+    return i2c_read_blocking(I2C_PORT, CAM_I2C_ADDR, value, 1, false) == 1;
+}
+
+static bool get_color_hue_range(const char *targetcolor, int *h_min, int *h_max) {
+    if (strcmp(targetcolor, "RED") == 0) {
+        *h_min = 315;
+        *h_max = 20;
+        return true;
+    }
+    if (strcmp(targetcolor, "GREEN") == 0) {
+        *h_min = 110;
+        *h_max = 155;
+        return true;
+    }
+    if (strcmp(targetcolor, "BLUE") == 0) {
+        *h_min = 190;
+        *h_max = 215;
+        return true;
+    }
+    if (strcmp(targetcolor, "YELLOW") == 0) {
+        *h_min = 40;
+        *h_max = 47;
+        return true;
+    }
+    if (strcmp(targetcolor, "PURPLE") == 0) {
+        *h_min = 255;
+        *h_max = 290;
+        return true;
+    }
+
+    return false;
+}
+
+static bool target_requires_circularity(const char *targetcolor) {
+    return strcmp(targetcolor, "RED") == 0 ||
+           strcmp(targetcolor, "GREEN") == 0 ||
+           strcmp(targetcolor, "BLUE") == 0;
+}
 
 
 // ===== CAMERA COMMUNICATION =====
@@ -67,6 +116,13 @@ uint8_t r_reg(uint8_t reg) {
     spi_read_blocking(SPI_PORT, 0, &val, 1);
     cs_deselect();
     return val;
+}
+
+static bool hue_in_range(int hue, int h_min, int h_max) {
+    if (h_min < h_max) {
+        return hue >= h_min && hue <= h_max;
+    }
+    return hue >= h_min || hue <= h_max;
 }
 
 // Convert RGB565 pixel to HSV and check if it matches the color range
@@ -105,15 +161,17 @@ static inline void process_pixel_hsv(uint16_t c16, int index, int h_min, int h_m
 
     // Only accept bright, saturated colors (ignore dull grays)
     if (mx > 50 && df > 20) {  // brightness > 50, saturation > 20
-        bool match = false;
-        if (h_min < h_max) {
-            match = (h >= h_min && h <= h_max);  // normal range
+        bool match = hue_in_range(h, h_min, h_max);
+        if (match) {
+            mask_buffer[index] = 255;                 // white if match
+            hue_buffer[index] = (uint8_t)(h / 2);    // store hue compactly (0..180)
         } else {
-            match = (h >= h_min || h <= h_max);  // wraparound range (e.g., red)
+            mask_buffer[index] = 0;
+            hue_buffer[index] = 0;
         }
-        mask_buffer[index] = match ? 255 : 0;  // white if match, black if not
     } else {
         mask_buffer[index] = 0;  // too dull/desaturated → not a color match
+        hue_buffer[index] = 0;
     }
 }
 
@@ -142,17 +200,22 @@ void init_cam() {
 
     // Write each register, with longer waits for reset (0x12, 0x80)
     for (int i = 0; i < sizeof(regs)/sizeof(regs[0]); i++) {
-        i2c_write_blocking(I2C_PORT, CAM_I2C_ADDR, regs[i], 2, false);
+        if (!sensor_write_reg(regs[i][0], regs[i][1])) {
+            return;
+        }
         if (regs[i][0] == 0x12 && regs[i][1] == 0x80) {
             sleep_ms(50);  // reset takes longer
         } else {
             sleep_ms(2);   // normal delay between regs
         }
     }
-   
-    // Verify camera is responding: read camera ID (should be 0x26)
-    uint8_t test_reg = r_reg(0x0A);
-    printf("[DEBUG] Camera ID register (0x0A): 0x%02X (should be 0x26)\n", test_reg);
+
+    w_reg(0x00, 0x55);
+    uint8_t spi_test = r_reg(0x00);
+
+    uint8_t pid = 0;
+    uint8_t ver = 0;
+    sensor_read_reg(0x0A, &pid) && sensor_read_reg(0x0B, &ver);
 }
 
 // --- BLOB FINDING AND ANALYSIS ---
@@ -172,7 +235,9 @@ void findblobs(const char* targetcolor) {
 
             while (!(r_reg(0x41) & 0x08)) {
                 if (to_ms_since_boot(get_absolute_time()) - start_time > 1000) {
-                    printf("[DEBUG] Camera capture timed out!\n");
+                    printf("[DEBUG] Camera capture timed out! trig=0x%02X size=%lu\n",
+                           r_reg(0x41),
+                           (unsigned long)(r_reg(0x42) | (r_reg(0x43) << 8) | ((r_reg(0x44) & 0x7f) << 16)));
                     w_reg(0x04, 0x01);
                     return;
                 }
@@ -195,20 +260,18 @@ void findblobs(const char* targetcolor) {
     uint8_t cmd = 0x3C;
     spi_write_blocking(SPI_PORT, &cmd, 1);
 
-    uint8_t dummy[100];
-    uint32_t skip_bytes = START_ROW * WIDTH * 2;
-    for (uint32_t i = 0; i < skip_bytes; i += 100) {
-        spi_read_blocking(SPI_PORT, 0, dummy, (skip_bytes - i < 100) ? skip_bytes - i : 100);
+    int h_min = 0;
+    int h_max = 0;
+    if (!get_color_hue_range(targetcolor, &h_min, &h_max)) {
+        cs_deselect();
+        printf("[DEBUG] Unsupported target color: %s\n", targetcolor);
+        w_reg(0x04, 0x01);
+        return;
     }
-
-    int h_min = 0, h_max = 0;
-    if (strcmp(targetcolor, "RED") == 0)   { h_min = 340; h_max = 20;  }
-    else if (strcmp(targetcolor, "GREEN") == 0) { h_min = 90;  h_max = 150; }
-    else if (strcmp(targetcolor, "BLUE") == 0)  { h_min = 200; h_max = 260; }
 
     uint8_t pixel_buf[2];
     int masked_count = 0;
-    for (int i = 0; i < WIDTH * CROP_HEIGHT; i++) {
+    for (int i = 0; i < PIXEL_COUNT; i++) {
         spi_read_blocking(SPI_PORT, 0, pixel_buf, 2);
         uint16_t c16 = (pixel_buf[0] << 8) | pixel_buf[1];
         process_pixel_hsv(c16, i, h_min, h_max);
@@ -220,11 +283,12 @@ void findblobs(const char* targetcolor) {
     // LOGIC CHANGE: Replaced cv2 with a BFS algorithm. Extremely fast and lightweight.
     int best_area = 0;
     int best_cx = 0, best_cy = 0;
+    int best_hue = 0;
     float best_roundness = 0.0f;
     int blob_count = 0;
     int largest_area = 0;
 
-    for (int y = 0; y < CROP_HEIGHT; y++) {
+    for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
             int idx = y * WIDTH + x;
            
@@ -240,8 +304,11 @@ void findblobs(const char* targetcolor) {
                 mask_buffer[idx] = 127; // Mark as visited
 
                 int area = 0;
-                int perimeter = 0;
                 long sum_x = 0, sum_y = 0;
+                long sum_hue = 0;
+                uint64_t sum_x2 = 0;
+                uint64_t sum_y2 = 0;
+                uint64_t sum_xy = 0;
 
                 while (head < tail) {
                     int cx = queue_x[head];
@@ -251,6 +318,10 @@ void findblobs(const char* targetcolor) {
                     area++;
                     sum_x += cx;
                     sum_y += cy;
+                    sum_hue += (long)hue_buffer[cy * WIDTH + cx] * 2;
+                    sum_x2 += (uint64_t)cx * (uint64_t)cx;
+                    sum_y2 += (uint64_t)cy * (uint64_t)cy;
+                    sum_xy += (uint64_t)cx * (uint64_t)cy;
                    
                     // Update bounding box
                     if (cx < min_x) min_x = cx;
@@ -266,18 +337,14 @@ void findblobs(const char* targetcolor) {
                         int nx = cx + dx[i];
                         int ny = cy + dy[i];
 
-                        if (nx >= 0 && nx < WIDTH && ny >= 0 && ny < CROP_HEIGHT) {
+                        if (nx >= 0 && nx < WIDTH && ny >= 0 && ny < HEIGHT) {
                             int n_idx = ny * WIDTH + nx;
                             if (mask_buffer[n_idx] == 255) { // Found connected pixel
                                 mask_buffer[n_idx] = 127; // Mark visited
                                 queue_x[tail] = nx;
                                 queue_y[tail] = ny;
                                 tail++;
-                            } else if (mask_buffer[n_idx] == 0) {
-                                perimeter++; // Touches empty space = edge
                             }
-                        } else {
-                            perimeter++; // Touches boundary of crop region = edge
                         }
                     }
                 }
@@ -286,26 +353,64 @@ void findblobs(const char* targetcolor) {
                     largest_area = area;
                 }
 
-                if (area > MIN_BLOB_AREA) {
+                bool requires_circularity = target_requires_circularity(targetcolor);
+                int min_area = requires_circularity ? MIN_BALL_BLOB_AREA : MIN_BLOB_AREA;
+
+                if (area > min_area) {
                     int bbox_width = max_x - min_x + 1;
                     int bbox_height = max_y - min_y + 1;
                     int bbox_area = bbox_width * bbox_height;
-                    float aspect_ratio = (float)bbox_width / bbox_height;
-                    if (aspect_ratio < 1.0f) aspect_ratio = 1.0f / aspect_ratio;
+                    int blob_hue = (int)(sum_hue / area);
+
+                    // Use second-moment (PCA) axis ratio instead of bbox ratio.
+                    // This is much more reliable for near-circular blobs.
+                    float mean_x = (float)sum_x / (float)area;
+                    float mean_y = (float)sum_y / (float)area;
+                    float ex2 = (float)sum_x2 / (float)area;
+                    float ey2 = (float)sum_y2 / (float)area;
+                    float exy = (float)sum_xy / (float)area;
+
+                    float cov_xx = ex2 - mean_x * mean_x;
+                    float cov_yy = ey2 - mean_y * mean_y;
+                    float cov_xy = exy - mean_x * mean_y;
+
+                    if (cov_xx < 0.0f) cov_xx = 0.0f;
+                    if (cov_yy < 0.0f) cov_yy = 0.0f;
+
+                    float trace = cov_xx + cov_yy;
+                    float delta = cov_xx - cov_yy;
+                    float rad = sqrtf(delta * delta + 4.0f * cov_xy * cov_xy);
+                    float lambda_max = 0.5f * (trace + rad);
+                    float lambda_min = 0.5f * (trace - rad);
+
+                    if (lambda_max < 1e-6f) lambda_max = 1e-6f;
+                    if (lambda_min < 1e-6f) lambda_min = 1e-6f;
+
+                    float aspect_ratio = sqrtf(lambda_max / lambda_min);
                     float solidity = (float)area / bbox_area;
+                    bool shape_match = false;
+
+                    if (requires_circularity) {
+                        shape_match = aspect_ratio < 2.3f && solidity > 0.70f;
+                    } else {
+                        shape_match = aspect_ratio < 4.0f && solidity > 0.35f;
+                    }
                    
                     //printf("[DEBUG] Blob: area=%d, bbox=%dx%d, aspect=%.2f, solidity=%.2f\r\n",area, bbox_width, bbox_height, aspect_ratio, solidity);
-                    if (aspect_ratio < 1.5f && solidity > 0.17f && solidity < 0.85f && area > best_area) {
+                    if (shape_match && area > best_area) {
                         best_area = area;
                         best_cx = sum_x / area;
-                        best_cy = (sum_y / area) + START_ROW;
+                        best_cy = sum_y / area;
+                        best_hue = blob_hue;
                         best_roundness = solidity;
-                    } else if (aspect_ratio >= 1.5f) {
-                        printf(" -> too elongated\n");
-                    } else if (solidity < 0.17f) {
-                        printf(" -> too hollow\n");
-                    } else if (solidity > 0.85f) {
-                        printf(" -> too solid (probably square)\n");
+                    // } else if (requires_circularity && aspect_ratio >= 2.3f) {
+                    //     printf("%s -> not circular enough %.2f\n", targetcolor, aspect_ratio);
+                    // } else if (!requires_circularity && aspect_ratio >= 4.0f) {
+                    //     printf("%s -> too elongated %.2f\n", targetcolor, aspect_ratio);
+                    // } else if (requires_circularity && solidity <= 0.70f) {
+                    //     printf("%s -> too hollow | hue:%d | solidity:%.2f\n", targetcolor, blob_hue, solidity);
+                    // } else if (!requires_circularity && solidity <= 0.35f) {
+                    //     printf("%s -> too hollow\n", targetcolor);
                     }
                     blob_count++;
                 }
@@ -313,19 +418,12 @@ void findblobs(const char* targetcolor) {
         }
     }
     if (best_area > 0) {
-        printf("SUCCESS: target: %s | x:%d y:%d | size:%d | roundness:%.2f\n",
-               targetcolor, best_cx, best_cy, best_area, best_roundness);
+        printf("SUCCESS: target: %s | x:%d y:%d | size:%d | roundness:%.2f | hue:%d\n",
+               targetcolor, best_cx, best_cy, best_area, best_roundness, best_hue);
     }
 }
 
 void setup() {
-    stdio_init_all();  // enable serial output (USB)
-
-    // ===== REBOOT BUTTON =====
-    gpio_init(REBOOT_BUTTON);           // initialize GPIO 15
-    gpio_set_dir(REBOOT_BUTTON, GPIO_IN); // set as input
-    gpio_pull_up(REBOOT_BUTTON);        // pull-up so normal state is HIGH, button press = LOW
-   
     // ===== SPI INIT (Camera data) =====
     spi_init(SPI_PORT, 4000000);        // SPI at 4MHz
     gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);   // clock
@@ -342,40 +440,4 @@ void setup() {
     gpio_set_function(PIN_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(PIN_SDA);              // enable pull-ups
     gpio_pull_up(PIN_SCL);
-
-    sleep_ms(100);                      // let buses stabilize
-}
-
-int main() {
-    setup();  // initialize all hardware (SPI, I2C, GPIO)
-   
-    // Give user time to open serial monitor before spamming output
-    printf("Starting...\n");
-    sleep_ms(5000);
-   
-    init_cam();  // configure camera registers
-    printf("Cam init done\n");
-    printf("Camera initialized...\n");
-    sleep_ms(500);
-
-    // ===== MAIN LOOP =====
-    while (true) {
-        // Check reboot button: if pressed (GPIO low), reboot into bootloader
-        if (!gpio_get(REBOOT_BUTTON)) {
-            printf("Rebooting to bootloader...\n");
-            sleep_ms(500);              // let USB flush before reboot
-            reset_usb_boot(0, 0);       // reboot into UF2 bootloader mode (drive appears)
-        }
-   
-        printf("working..\r\n");
-     
-        // Capture one frame and search for each color in sequence
-        findblobs("RED");
-        findblobs("GREEN");
-        findblobs("BLUE");
-        
-        sleep_ms(1000);  // wait 1 second before next frame
-    }
-    
-    return 0;
 }

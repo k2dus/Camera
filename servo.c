@@ -11,8 +11,8 @@
 #define SERVO_DEFAULT_PWM_FREQ 50.0f
 #define SERVO_DEFAULT_MIN_U16_DUTY 1802
 #define SERVO_DEFAULT_MAX_U16_DUTY 7864
-#define SERVO_DEFAULT_MIN_ANGLE 0.0f
-#define SERVO_DEFAULT_MAX_ANGLE 180.0f
+#define SERVO_DEFAULT_MIN_ANGLE 20.0f
+#define SERVO_DEFAULT_MAX_ANGLE 160.0f
 #define SERVO_PWM_WRAP 19999
 #define SERVO_PWM_CLKDIV 125.0f
 
@@ -111,10 +111,10 @@ void servo_scoop_with(Servo *servo) {
         return;
     }
 
-    servo_move(servo, 180.0f);
-    sleep_ms(2000);
-    servo_move(servo, 0.0f);
+    servo_move(servo, 40.0f);
     sleep_ms(1000);
+    servo_move(servo, 160.0f);
+    sleep_ms(2000);
 }
 
 void servo_sort_with(Servo *servo, const char *color) {
