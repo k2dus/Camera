@@ -29,6 +29,10 @@ void servo_update_settings(
 );
 void servo_move(Servo *servo, float angle);
 void servo_stop(Servo *servo);
+
+void scoop_up(Servo *servo);
+void scoop_down(Servo *servo);
+
 float servo_get_current_angle(const Servo *servo);
 
 void servo_scoop_with(Servo *servo);

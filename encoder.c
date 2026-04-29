@@ -3,6 +3,8 @@
 #include "hardware/gpio.h"
 
 #define ENCODER_MAX_PIN 30
+#define _USE_MATH_DEFINES
+#include <math.h>
 
 static Encoder *encoder_by_pin[ENCODER_MAX_PIN];
 

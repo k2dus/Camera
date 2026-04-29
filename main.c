@@ -1,13 +1,18 @@
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
+#include <stdio.h>
+#include <time.h>
 
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/i2c.h"
+#include "hardware/pwm.h"
 
-#include "colorsensor.h"
 #include "camera.h"
+#include "colorsensor.h"
 #include "compass.h"
+#include "encoder.h"
 #include "hcsr04.h"
 #include "motornoencoder.h"
 #include "servo.h"
@@ -25,15 +30,17 @@
 
 #define DIST_TRIGGER_PIN 27
 #define DIST_ECHO_PIN 28
+#define DIST_ECHO_PIN_RIGHT 26
+
 #define REBOOT_BUTTON 12
-#define MOTOR_LFWD_PIN 6
-#define MOTOR_LREV_PIN 7
-#define MOTOR_RFWD_PIN 10
-#define MOTOR_RREV_PIN 11
-#define LEFTENCODERA   18
-#define LEFTENCODERB   19
-#define RIGHTENCODERA   20
-#define RIGHTENCODERB   21
+#define LFWD_MOTOR     6
+#define LREV_MOTOR     7
+#define RFWD_MOTOR     10
+#define RREV_MOTOR     11
+#define LChannelA    18
+#define LChannelB    19
+#define RChannelA    20
+#define RChannelB    21
 
 
 #define scoop_PIN 1
@@ -58,10 +65,10 @@
 //GP0   scoop_PIN              VBUS
 //GP1   sorter_PIN             VSYS
 //GND                          GND
-//GP2   MOTOR_LFWD_PIN         3V3_EN
-//GP3   MOTOR_LREV_PIN         3V3(OUT)
-//GP4   MOTOR_RFWD_PIN         ADC_VREF
-//GP5   MOTOR_RREV_PIN         GP28  DIST_ECHO_PIN
+//GP2   MOTOR_LFWD_MOTOR         3V3_EN
+//GP3   MOTOR_LREV_MOTOR         3V3(OUT)
+//GP4   MOTOR_RFWD_MOTOR         ADC_VREF
+//GP5   MOTOR_RREV_MOTOR         GP28  DIST_ECHO_PIN
 //GND                          GND
 //GP6   FREE                   GP27  DIST_TRIGGER_PIN
 //GP7   FREE                   GP26  FREE (ADC)
@@ -75,9 +82,299 @@
 //GND                          GND
 //GP14  OVERCURRENT1           GP17  REDFLYWHEEL
 //GP15  OVERCURRENT2           GP16  GREENFLYWHEEL  
+
+// // ===== GLOBAL STATE =====
+volatile int x_pos = 105; // starting position: middle of field
+volatile int y_pos = 0;
+int heading = 0;
+int max_x = 205;    //we can move roughly 205cm to the right from 0,0
+int min_x = 10;
+int max_y = 245;    //we can move roughly 245cm towards the enemy
+int min_y = 0;
+
+Encoder left_enc;
+Encoder right_enc;
+
+// // ===== HELPER FUNCTIONS =====
+// void init_pins() { //Initialize GPIO pins for encoders and motors
+//     //Initialize Encoders
+//     encoder_init(&left_enc, LChannelA, LChannelB);
+//     encoder_init(&right_enc, RChannelA, RChannelB);
+//     gpio_set_function(LREV_MOTOR, GPIO_FUNC_PWM);
+//     gpio_set_function(LFWD_MOTOR, GPIO_FUNC_PWM);
+//     gpio_set_function(RFWD_MOTOR, GPIO_FUNC_PWM);
+//     gpio_set_function(RREV_MOTOR, GPIO_FUNC_PWM);
+// }
+
+// void turn(bool direction, short angleChange, int speed) { // 0 == LEFT, 1 == RIGHT, angleChange in DEGREES, speed [0 - 100]
+//     int duty_cycle = (speed * 65535) / 100;
+//     int pastHeading = heading;
+//     if(direction == 0) {
+//         int futureHeading = pastHeading - angleChange;
+//         if (futureHeading < -180) {
+//             futureHeading += 360;
+//         }
+//         while(heading < futureHeading + 2 || heading > futureHeading - 2) {
+//             //UPDATE HEADING HERE IF NOT AUTOMATIC
+//             pwm_set_gpio_level(LREV_MOTOR, duty_cycle);
+//             pwm_set_gpio_level(LFWD_MOTOR, 0);
+//             pwm_set_gpio_level(RFWD_MOTOR, duty_cycle);
+//             pwm_set_gpio_level(RREV_MOTOR, 0);
+//             sleep_ms(5);
+//         }
+//         pwm_set_gpio_level(LREV_MOTOR, 0);
+//         pwm_set_gpio_level(LFWD_MOTOR, 0);
+//         pwm_set_gpio_level(RFWD_MOTOR, 0);
+//         pwm_set_gpio_level(RREV_MOTOR, 0);
+//         return;
+//     }
+//     else {
+//         int futureHeading = pastHeading + angleChange;
+//         if (futureHeading > 180) {
+//             futureHeading -= 360;
+//         }
+//         while(heading < futureHeading + 2 || heading > futureHeading - 2) {
+//             //UPDATE HEADING HERE IF NOT AUTOMATIC
+//             pwm_set_gpio_level(LREV_MOTOR, 0);
+//             pwm_set_gpio_level(LFWD_MOTOR, duty_cycle);
+//             pwm_set_gpio_level(RFWD_MOTOR, 0);
+//             pwm_set_gpio_level(RREV_MOTOR, duty_cycle);
+//             sleep_ms(5);
+//         }
+//         pwm_set_gpio_level(LREV_MOTOR, 0);
+//         pwm_set_gpio_level(LFWD_MOTOR, 0);
+//         pwm_set_gpio_level(RFWD_MOTOR, 0);
+//         pwm_set_gpio_level(RREV_MOTOR, 0);
+//         return;
+//     }
+// }
+
+// void move(bool DIR, int distance, int speed) { //DIR 1 = FWD, 0 = REV, distance in cm, speed [0 - 100]
+//     int start_pos_x = x_pos;
+//     int start_pos_y = y_pos;
+//     int leftCount = 0;
+//     int rightCount = 0;
+//     int heading = 0; //IMU HEADING NUMBER?
+//     int x_distance = distance * cos(heading * M_PI / 180);
+//     int y_distance = distance * sin(heading * M_PI / 180);
+
+//     // Set direction pins
+//     while((x_pos < start_pos_x + x_distance) && (x_pos < max_x) && (y_pos < max_y) && (y_pos > min_y) && (x_pos > min_x)) {
+//         //UPDATE ENCODER COUNTS AND HEADING
+//         leftCount = 0; //encoder_delta(&left_enc);
+//         rightCount = 0; //encoder_delta(&lright_enc);
+//         x_pos += ((leftCount + rightCount) / 2) * cos(heading * M_PI / 180) * (8*M_PI/1920); // 8cm wheel diameter, 1920 counts per revolution
+//         y_pos += ((leftCount + rightCount) / 2) * sin(heading * M_PI / 180) * (8*M_PI/1920);
+
+//         // Set PWM duty cycle based on speed
+//         int duty_cycle = (speed * 65535) / 100; // Convert percentage to 16-bit value
+//         if (DIR) { // Forward PWM
+//             pwm_set_gpio_level(LFWD_MOTOR, duty_cycle);
+//             pwm_set_gpio_level(LREV_MOTOR, 0); }
+//         else {
+//             pwm_set_gpio_level(LFWD_MOTOR, 0);
+//             pwm_set_gpio_level(LREV_MOTOR, duty_cycle); }
+//         if (DIR) {
+//             pwm_set_gpio_level(RFWD_MOTOR, duty_cycle);
+//             pwm_set_gpio_level(RREV_MOTOR, 0); }
+//         else {
+//             pwm_set_gpio_level(RFWD_MOTOR, 0);
+//             pwm_set_gpio_level(RREV_MOTOR, duty_cycle); }
+//         //go direction for at least 10ms.
+//         sleep_ms(10);
+//     }
+//     //When we have reached the target position,
+//     //or hit a boundary, stop the motors
+//     pwm_set_gpio_level(LFWD_MOTOR, 0);
+//     pwm_set_gpio_level(LREV_MOTOR, 0);
+//     pwm_set_gpio_level(RFWD_MOTOR, 0);
+//     pwm_set_gpio_level(RREV_MOTOR, 0);
+//     return;
+// }
+
+// //----------------STATE MACHINES----------------------
+
+
+
+// typedef void (*StateFunc)(void);
+// StateFunc current_state;
+
+// static const char *captured_ball_label = NULL;
+// static int chamber_ball_count = 0;
+
+// #define TARGET 3
+// #define EXTRA_SEARCH_TIMEOUT_MS 12000
+
+// // Field geometry (cm): 7ft wide field, centered 3ft-wide goals.
+// #define FIELD_WIDTH_CM 213.36f
+// #define GOAL_WIDTH_CM 91.44f
+// #define FIELD_CENTER_X_CM (FIELD_WIDTH_CM * 0.5f)
+// #define GOAL_HALF_WIDTH_CM (GOAL_WIDTH_CM * 0.5f)
+// #define GOAL_MIN_X_CM (FIELD_CENTER_X_CM - GOAL_HALF_WIDTH_CM)
+// #define GOAL_MAX_X_CM (FIELD_CENTER_X_CM + GOAL_HALF_WIDTH_CM)
+
+// void state_initial(void);
+// void state_goalie(void);
+// void state_capture(void);
+// void state_deposit(void);
+
+// // States in State Machine
+// void state_initial(void) {// Rush towards middle line
+//     move(1, 91, 80);
+//     // transfer to captu
+//     current_state = state_capture;
+// }
+// void state_goalie(void) {// Move back and forth in front of goal
+//     move(0, 107, 90);
+//     turn(1, 90, 90);
+//     while(current_state == state_goalie){
+//         move(1,48, 90);
+//         sleep_ms(500);
+//         move(0, 91, 90);
+//         sleep_ms(500);
+//     }
+// //    if (/* trigger */) current_state = state_search;
+// }
+
+// static bool is_ball(const char *label) {
+//     return label != NULL &&
+//            (strcmp(label, "RED") == 0 ||
+//             strcmp(label, "BLUE") == 0 ||
+//             strcmp(label, "GREEN") == 0);
+// }
+
+// static bool is_enemy_goal_ball(const char *label) {
+//     return label != NULL && strcmp(label, "RED") == 0;
+// }
+
+// static bool is_own_goal_ball(const char *label) {
+//     return label != NULL &&
+//            (strcmp(label, "GREEN") == 0 || strcmp(label, "BLUE") == 0);
+// }
+
+// static bool early_deposit(uint32_t search_start_ms) {
+//     if (chamber_ball_count <= 0) {
+//         return false;
+//     }
+
+//     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+//     return (now_ms - search_start_ms) >= EXTRA_SEARCH_TIMEOUT_MS;
+// }
+
+// void state_capture(void) { // Search and capture
+//     uint32_t search_start_ms = to_ms_since_boot(get_absolute_time());
+//     BlobDetection blob;
+//     bool found = findblobs(&blob);
+
+//     while (!found || !is_ball(blob.label)) {
+//         if (early_deposit(search_start_ms)) {
+//             current_state = state_deposit;
+//             return;
+//         }
+
+//         move(1, 40, 90);
+//         turn(0, 45, 90);
+//         move(1, 40, 90);
+//         turn(0, 45, 90);
+//         found = findblobs(&blob);
+//     }
+
+//     printf("Ball found: %s at x=%d y=%d\n", blob.label, blob.x, blob.y);
+
+//     while (gpio_get(BEAM_SENSOR_PIN) == 1) {
+//         if (early_deposit(search_start_ms)) {
+//             current_state = state_deposit;
+//             return;
+//         }
+
+//         found = findblobs(&blob);
+
+//         if (!found || !is_ball(blob.label)) {
+//             // Lost the ball temporarily: scan left a little and retry.
+//             turn(0, 10, 80);
+//             continue;
+//         }
+
+//         // 320px wide frame: center around x in [107, 213].
+//         if (blob.x < 107) {
+//             turn(0, 10, 90);
+//         } else if (blob.x > 213) {
+//             turn(1, 10, 90);
+//         } else {
+//             move(1, 20, 80);
+//         }
+//     }
+
+//     if (chamber_ball_count < TARGET) {
+//         chamber_ball_count++;
+//     }
+//     captured_ball_label = blob.label;
+
+//     if (chamber_ball_count >= TARGET) {
+//         current_state = state_deposit;
+//     } else {
+//         current_state = state_capture;
+//     }
+
+// }
+
+// void state_deposit(void) { // SCORE
+//     if (chamber_ball_count <= 0) {
+//         current_state = state_capture;
+//         return;
+//     }
+
+//     if (!is_ball(captured_ball_label)) {
+//         current_state = state_capture;
+//         return;
+//     }
+
+//     // Stay inside the horizontal window of a centered 3ft goal on a 7ft field.
+//     if (x_pos < GOAL_MIN_X_CM) {
+//         turn(1, 12, 85);
+//         move(1, 20, 85);
+//         turn(0, 12, 85);
+//     } else if (x_pos > GOAL_MAX_X_CM) {
+//         turn(0, 12, 85);
+//         move(1, 20, 85);
+//         turn(1, 12, 85);
+//     }
+
+//     if (is_enemy_goal_ball(captured_ball_label)) {
+//         // RED: shoot toward the opponent goal (forward from starting orientation).
+//     } else if (is_own_goal_ball(captured_ball_label)) {
+//         // GREEN/BLUE: shoot back toward our own goal.
+//         turn(1, 180, 90);
+
+//     }
+
+//     // TODO: trigger flywheel/launcher hardware here.
+
+//     captured_ball_label = NULL;
+//     chamber_ball_count = 0;
+//     current_state = state_capture;
+// }   
+
 int main() {
     // INIT
     stdio_init_all();
+    
+    // MOTOR INIT OLD
+
+    MotorNoEncoder motor;
+    motor_noencoder_init(
+        &motor,
+        LREV_MOTOR,
+        RFWD_MOTOR,
+        LFWD_MOTOR,
+        RREV_MOTOR,
+        MOTOR_NOENCODER_NO_FAULT_PIN,
+        MOTOR_NOENCODER_NO_FAULT_PIN,
+        1000,
+        300,
+        150
+    );
+    motor_noencoder_stop_all(&motor);
     sleep_ms(3000);
 
     gpio_init(REBOOT_BUTTON);
@@ -86,25 +383,27 @@ int main() {
 
     // Initialize shared camera/color-sensor bus and SPI camera interface.
     setup();
+    camera_bus_diagnostic();
 
     gpio_init(BEAM_SENSOR_PIN);
     gpio_set_dir(BEAM_SENSOR_PIN, GPIO_IN);
     gpio_pull_up(BEAM_SENSOR_PIN);
 
     // COLOR SENSOR INIT
+    
 
-    // TCS34725 sensor;
-    // if (!tcs34725_init(&sensor, COLOR_I2C_PORT, COLOR_SENSOR_ADDR)) {
-    //     printf("Color sensor init failed\n");
-    //     while (true) {
-    //         sleep_ms(1000);
-    //     }
-    // }
+    TCS34725 sensor;
+    if (!tcs34725_init(&sensor, COLOR_I2C_PORT, COLOR_SENSOR_ADDR)) {
+        printf("Color sensor init failed\n");
+        while (true) {
+            sleep_ms(1000);
+        }
+    }
 
-    // uint8_t sensor_id = 0;
-    // if (tcs34725_get_sensor_id(&sensor, &sensor_id)) {
-    //     printf("Color sensor ID: 0x%02X\n", sensor_id);
-    // }
+    uint8_t sensor_id = 0;
+    if (tcs34725_get_sensor_id(&sensor, &sensor_id)) {
+        printf("Color sensor ID: 0x%02X\n", sensor_id);
+    }
 
 
     // // DISTANCE SENSOR INIT
@@ -112,31 +411,15 @@ int main() {
     // HCSR04 distance_sensor;
     // hcsr04_init(&distance_sensor, DIST_TRIGGER_PIN, DIST_ECHO_PIN, 0);
 
-    // MOTOR INIT
-
-    MotorNoEncoder motor;
-    motor_noencoder_init(
-        &motor,
-        MOTOR_LREV_PIN,
-        MOTOR_RFWD_PIN,
-        MOTOR_LFWD_PIN,
-        MOTOR_RREV_PIN,
-        MOTOR_NOENCODER_NO_FAULT_PIN,
-        MOTOR_NOENCODER_NO_FAULT_PIN,
-        1000,
-        300,
-        150
-    );
-    motor_noencoder_stop_all(&motor);
 
     // // SERVOS INIT
 
     Servo scoop;
-    // Servo sorter;
+    Servo sorter;
     servo_init(&scoop, scoop_PIN);
-    // servo_init(&sorter, sorter_PIN);
+    servo_init(&sorter, sorter_PIN);
     servo_move(&scoop, 0.0f);
-    // servo_move(&sorter, 0.0f);
+    servo_move(&sorter, 0.0f);
 
     bool beam_was_broken = false;
 
@@ -159,7 +442,14 @@ int main() {
     init_cam();  // configure camera registers
     printf("Cam init done\n");
     printf("Camera initialized...\n");
+    
+    bool searching = true;
 
+    gpio_init(GREENFLYWHEEL);
+    gpio_set_dir(GREENFLYWHEEL, GPIO_OUT);
+    gpio_init(REDFLYWHEEL);
+    gpio_set_dir(REDFLYWHEEL, GPIO_OUT);
+    
     while (true) {
         
         // BOOTSEL
@@ -171,11 +461,11 @@ int main() {
         printf("working..\r\n");
      
         // Capture one frame and search for each color in sequence
-        findblobs("RED");
-        findblobs("GREEN");
-        findblobs("BLUE");
-        findblobs("YELLOW");
-        findblobs("PURPLE");
+        // findblobs("RED");
+        // findblobs("GREEN");
+        // findblobs("BLUE");
+        // findblobs("YELLOW");
+        // findblobs("PURPLE");
 
         // if (compass_ok) {
         //     ak8963_vector_t magnetic;
@@ -192,51 +482,64 @@ int main() {
 
         // motor_noencoder_check_overcurrent(&motor);
         
-        // bool beam_broken = gpio_get(BEAM_SENSOR_PIN) == 0;
+        bool beam_broken = gpio_get(BEAM_SENSOR_PIN) == 0;
         
-        // while(gpio_get(BEAM_SENSOR_PIN) == 1) {
-            // motor_noencoder_move(&motor, 1, true, true);
-            // sleep_ms(500);
-            // motor_noencoder_move(&motor, 1, false, false);
-            // sleep_ms(500);
-            // motor_noencoder_move(&motor, 1, false, false);
-            // sleep_ms(500);
-            // motor_noencoder_move(&motor, 1, true, true);
-            // sleep_ms(500);
-            // printf("beam noball %d \n" ,gpio_get(BEAM_SENSOR_PIN) == 0);
-            // printf("motor noball: %d \n" ,gpio_get(MOTOR_RFWD_PIN) != 0);
-            // printf("servo noball: %d \n" ,gpio_get(scoop_PIN) != 0);
+        
+        
+        
+        printf("beam noball %d \n" ,gpio_get(BEAM_SENSOR_PIN) == 0);
 
-            // motor_noencoder_move(&motor, 1, false, true);
-            // sleep_ms(3000);
-        // }
-        // printf("motor noball: %d \n" ,gpio_get(MOTOR_RFWD_PIN) != 0);
-        // printf("servo noball: %d \n" ,gpio_get(scoop_PIN) != 0);
+        
 
-
-        // printf("beam  noball%d \n",gpio_get(BEAM_SENSOR_PIN) == 0);
-        // sleep_ms(500);
-        // motor_noencoder_move(&motor, 0, true, false);
-
-        // if (beam_broken && !beam_was_broken) {
-        //     printf("Beam broken\n");
-        //     servo_scoop_with(&scoop);
-        // }
-        // beam_was_broken = beam_broken;
-
-        // tcs34725_raw_data_t data;
-        // if (tcs34725_read_raw(&sensor, &data)) {
-        //     const char *detected = tcs34725_detect_color_from_raw(&data);
-        //     if(detected != NULL){
-        //         printf("color sesnor %s\r\n", detected);
-        //         servo_sort_with(&sorter, detected);
-        //     }
-        //     else {
-        //         printf("color sensor NULL");
-        //     }
-        // } else {
-        //     printf("Color sensor read failed\n");
-        // }
+        if(searching){
+            // motor_noencoder_move(&motor, .5, true, true);
+            printf("searching");
+            sleep_ms(50);
+        }
+        
+        
+        printf("beam  noball%d \n",gpio_get(BEAM_SENSOR_PIN) == 0);
+        sleep_ms(10);
+        tcs34725_raw_data_t data;
+        int retc = tcs34725_read_raw(&sensor, &data);
+        const char *detected = tcs34725_detect_color_from_raw(&data);
+        time_t seconds;
+    // Both methods obtain the current time
+        
+        if (beam_broken && !beam_was_broken) {
+            printf("Beam broken\n");
+            scoop_up(&scoop);
+            seconds = time(NULL);
+            // sleep_ms(250);
+            // motor_noencoder_move(&motor, 0, false, false);
+            searching = false;
+            printf("the search is over.... Yurah");
+            while(detected == NULL && time(NULL) - seconds < 5){
+                
+                retc = tcs34725_read_raw(&sensor, &data);
+                detected = tcs34725_detect_color_from_raw(&data);
+                if (detected != NULL) {
+                    printf("color sensor %s\r\n", detected);
+                    servo_sort_with(&sorter, detected);
+                    break;
+                }
+                if (detected != NULL) {
+                    printf("you are dumb");
+                }
+            }
+            scoop_down(&scoop);
+            // motor_noencoder_move(&motor, .5, true, false);
+            // sleep_ms(2000);
+            // motor_noencoder_move(&motor, 0, false, false);
+            gpio_put(GREENFLYWHEEL, 1);
+            gpio_put(REDFLYWHEEL, 1);
+            sleep_ms(500000);
+            gpio_put(GREENFLYWHEEL, 0);
+            gpio_put(REDFLYWHEEL, 0);
+            printf("while loop over");
+        }
+        beam_was_broken = beam_broken;
+        
 
         //While beam not broken, move forward to find mall
         
@@ -253,7 +556,14 @@ int main() {
         //     printf("Distance: out of range or no echo\n");
         //     motor_noencoder_stop_all(&motor);
         // }
+        // BlobDetection blob;
+        // bool found = findblobs(&blob);
+        // if (found && blob.label != NULL) {
+        //     printf("BALL FOUND: %s at x=%d y=%d\n", blob.label, blob.x, blob.y);
+        // } else {
+        //     printf("No valid ball in frame\n");
+        // }
 
-        sleep_ms(500);
+        sleep_ms(100);
     }
 }

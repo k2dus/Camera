@@ -26,6 +26,7 @@
 #define WIDTH 320               // image width in pixels
 #define HEIGHT 240              // image height in pixels
 #define PIXEL_COUNT (WIDTH * HEIGHT)
+#define DIAG_I2C_TIMEOUT_US 50000
 #define MIN_BLOB_AREA 500       // minimum connected pixels to treat as a blob
 #define MIN_BALL_BLOB_AREA 900  // stricter minimum for RGB balls
 
@@ -81,6 +82,54 @@ static bool target_requires_circularity(const char *targetcolor) {
     return strcmp(targetcolor, "RED") == 0 ||
            strcmp(targetcolor, "GREEN") == 0 ||
            strcmp(targetcolor, "BLUE") == 0;
+}
+
+void w_reg(uint8_t reg, uint8_t val);
+uint8_t r_reg(uint8_t reg);
+
+static bool sensor_read_reg_timeout(uint8_t reg, uint8_t *value) {
+    int wrote = i2c_write_timeout_us(I2C_PORT, CAM_I2C_ADDR, &reg, 1, true, DIAG_I2C_TIMEOUT_US);
+    if (wrote != 1) {
+        return false;
+    }
+
+    int read = i2c_read_timeout_us(I2C_PORT, CAM_I2C_ADDR, value, 1, false, DIAG_I2C_TIMEOUT_US);
+    return read == 1;
+}
+
+void camera_bus_diagnostic(void) {
+    printf("[DIAG] Camera bus test start\n");
+    printf("[DIAG] I2C step: reading camera ID regs...\n");
+
+    uint8_t pid = 0;
+    uint8_t ver = 0;
+    bool i2c_ok = sensor_read_reg_timeout(0x0A, &pid) && sensor_read_reg_timeout(0x0B, &ver);
+
+    if (i2c_ok) {
+        printf("[DIAG] I2C PASS: PID=0x%02X VER=0x%02X\n", pid, ver);
+    } else {
+        printf("[DIAG] I2C FAIL/TIMEOUT: cannot read camera ID regs\n");
+    }
+
+    printf("[DIAG] SPI step: register readback test...\n");
+    uint8_t patterns[] = {0x55, 0xAA};
+    bool spi_ok = true;
+    for (int i = 0; i < 2; i++) {
+        w_reg(0x00, patterns[i]);
+        sleep_ms(1);
+        uint8_t got = r_reg(0x00);
+        if (got != patterns[i]) {
+            spi_ok = false;
+            printf("[DIAG] SPI mismatch: wrote 0x%02X read 0x%02X\n", patterns[i], got);
+            break;
+        }
+    }
+
+    if (spi_ok) {
+        printf("[DIAG] SPI PASS: register readback OK\n");
+    } else {
+        printf("[DIAG] SPI FAIL\n");
+    }
 }
 
 
@@ -219,7 +268,7 @@ void init_cam() {
 }
 
 // --- BLOB FINDING AND ANALYSIS ---
-void findblobs(const char* targetcolor) {
+static bool find_blob_for_target(const char *targetcolor, int *out_x, int *out_y) {
     w_reg(0x04, 0x01); // clear flag
     sleep_ms(2);
     w_reg(0x04, 0x02); // capture new frame
@@ -239,7 +288,7 @@ void findblobs(const char* targetcolor) {
                            r_reg(0x41),
                            (unsigned long)(r_reg(0x42) | (r_reg(0x43) << 8) | ((r_reg(0x44) & 0x7f) << 16)));
                     w_reg(0x04, 0x01);
-                    return;
+                    return false;
                 }
             }
 
@@ -251,7 +300,7 @@ void findblobs(const char* targetcolor) {
     if (size < 5000) {
         printf("[DEBUG] Frame too small, skipping\n");
         w_reg(0x04, 0x01);
-        return;
+        return false;
     }
 
     // --- 1. SPI READ AND MASK GENERATION ---
@@ -266,7 +315,7 @@ void findblobs(const char* targetcolor) {
         cs_deselect();
         printf("[DEBUG] Unsupported target color: %s\n", targetcolor);
         w_reg(0x04, 0x01);
-        return;
+        return false;
     }
 
     uint8_t pixel_buf[2];
@@ -396,21 +445,21 @@ void findblobs(const char* targetcolor) {
                         shape_match = aspect_ratio < 4.0f && solidity > 0.35f;
                     }
                    
-                    //printf("[DEBUG] Blob: area=%d, bbox=%dx%d, aspect=%.2f, solidity=%.2f\r\n",area, bbox_width, bbox_height, aspect_ratio, solidity);
+                    printf("[DEBUG] Blob: %d area=%d, bbox=%dx%d, aspect=%.2f, solidity=%.2f\r\n",blob_hue, area, bbox_width, bbox_height, aspect_ratio, solidity);
                     if (shape_match && area > best_area) {
                         best_area = area;
                         best_cx = sum_x / area;
                         best_cy = sum_y / area;
                         best_hue = blob_hue;
                         best_roundness = solidity;
-                    // } else if (requires_circularity && aspect_ratio >= 2.3f) {
-                    //     printf("%s -> not circular enough %.2f\n", targetcolor, aspect_ratio);
-                    // } else if (!requires_circularity && aspect_ratio >= 4.0f) {
-                    //     printf("%s -> too elongated %.2f\n", targetcolor, aspect_ratio);
-                    // } else if (requires_circularity && solidity <= 0.70f) {
-                    //     printf("%s -> too hollow | hue:%d | solidity:%.2f\n", targetcolor, blob_hue, solidity);
-                    // } else if (!requires_circularity && solidity <= 0.35f) {
-                    //     printf("%s -> too hollow\n", targetcolor);
+                    } else if (requires_circularity && aspect_ratio >= 2.3f) {
+                        printf("%s -> not circular enough %.2f\n", targetcolor, aspect_ratio);
+                    } else if (!requires_circularity && aspect_ratio >= 4.0f) {
+                        printf("%s -> too elongated %.2f\n", targetcolor, aspect_ratio);
+                    } else if (requires_circularity && solidity <= 0.70f) {
+                        printf("%s -> too hollow | hue:%d | solidity:%.2f\n", targetcolor, blob_hue, solidity);
+                    } else if (!requires_circularity && solidity <= 0.35f) {
+                        printf("%s -> too hollow\n", targetcolor);
                     }
                     blob_count++;
                 }
@@ -418,9 +467,42 @@ void findblobs(const char* targetcolor) {
         }
     }
     if (best_area > 0) {
-        printf("SUCCESS: target: %s | x:%d y:%d | size:%d | roundness:%.2f | hue:%d\n",
-               targetcolor, best_cx, best_cy, best_area, best_roundness, best_hue);
+        if (out_x != NULL) {
+            *out_x = best_cx;
+        }
+        if (out_y != NULL) {
+            *out_y = best_cy;
+        }
+        return true;
     }
+
+    return false;
+}
+
+bool findblobs(BlobDetection *result) {
+    static const char *targets[] = {"RED", "BLUE", "GREEN", "YELLOW", "PURPLE"};
+    const int target_count = (int)(sizeof(targets) / sizeof(targets[0]));
+
+    if (result == NULL) {
+        return false;
+    }
+
+    result->label = NULL;
+    result->x = -1;
+    result->y = -1;
+
+    for (int i = 0; i < target_count; i++) {
+        int detected_x = -1;
+        int detected_y = -1;
+        if (find_blob_for_target(targets[i], &detected_x, &detected_y)) {
+            result->label = targets[i];
+            result->x = detected_x;
+            result->y = detected_y;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void setup() {
@@ -436,6 +518,13 @@ void setup() {
 
     // ===== I2C INIT (Camera config) =====
     i2c_init(I2C_PORT, 50000);          // I2C at 50kHz
+
+    // Explicitly configure weak internal pull-ups on SDA/SCL.
+    gpio_init(PIN_SDA);
+    gpio_init(PIN_SCL);
+    gpio_set_pulls(PIN_SDA, true, false);
+    gpio_set_pulls(PIN_SCL, true, false);
+
     gpio_set_function(PIN_SDA, GPIO_FUNC_I2C);
     gpio_set_function(PIN_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(PIN_SDA);              // enable pull-ups

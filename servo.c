@@ -106,15 +106,21 @@ float servo_get_current_angle(const Servo *servo) {
     return servo->current_angle;
 }
 
-void servo_scoop_with(Servo *servo) {
+void scoop_up(Servo *servo) {
     if (servo == NULL) {
         return;
     }
 
+    servo_move(servo, 145.0f);
+    sleep_ms(50);
+}
+
+void scoop_down(Servo *servo){    
+    if (servo == NULL) {
+        return;
+    }
     servo_move(servo, 40.0f);
-    sleep_ms(1000);
-    servo_move(servo, 160.0f);
-    sleep_ms(2000);
+    sleep_ms(500);
 }
 
 void servo_sort_with(Servo *servo, const char *color) {
@@ -124,11 +130,11 @@ void servo_sort_with(Servo *servo, const char *color) {
 
     if (strcmp(color, "BLUE") == 0 || strcmp(color, "GREEN") == 0) {
         printf("opening g/b\n");
-        servo_move(servo, 90.0f);
+        servo_move(servo, 150.0f);
         sleep_ms(1000);
     } else if (strcmp(color, "RED") == 0) {
         printf("opening red\n");
-        servo_move(servo, 0.0f);
+        servo_move(servo, 70.0f);
         sleep_ms(1000);
     }
 }
@@ -138,7 +144,8 @@ void servo_module_init(unsigned int pin) {
 }
 
 void servo_scoop(void) {
-    servo_scoop_with(&default_servo);
+    scoop_up(&default_servo);
+    scoop_down(&default_servo);
 }
 
 void servo_sort(const char *color) {
