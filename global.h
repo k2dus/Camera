@@ -28,7 +28,25 @@
 #include "mpu9250.h"
 #include "servo.h"
 
+// // ===== GLOBAL STATE =====
+extern volatile int x_pos; // starting position: middle of field
+extern volatile int y_pos;
+extern volatile int heading;
+extern int max_x;    //we can move roughly 205cm to the right from 0,0
+extern int min_x;
+extern int max_y;    //we can move roughly 245cm towards the enemy
+extern int min_y;
+
+// extern MotorNoEncoder motor;
+extern TCS34725 sensor;
+extern Servo scoop;
+extern Servo sorter;
+extern Servo chamber_stop;
+extern Compass compass;
+
+extern Encoder left_enc;
+extern Encoder right_enc;
+
 void sleepcheck(int x);
-float normalize_heading(float relative);
 
 #endif

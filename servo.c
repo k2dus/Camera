@@ -144,6 +144,30 @@ void servo_sort(const char *color) {
     servo_sort_with(&default_servo, color);
 }
 
+// Chamber Release Servo
+void servo_chamber_center(Servo *servo) {
+    if (servo == NULL) {
+        return;
+    }
+    servo_move(servo, 75.0f);
+    sleep_ms(50);
+}
+void servo_chamber_gbpass(Servo *servo) {
+    if (servo == NULL) {
+        return;
+    }
+    servo_move(servo, 60.0f);
+    sleep_ms(50);
+}
+void servo_chamber_redpass(Servo *servo) {
+    if (servo == NULL) {
+        return;
+    }
+    servo_move(servo, 95.0f);
+    sleep_ms(50);
+}
+
+
 Servo *servo_get_default(void) {
     return &default_servo;
 }

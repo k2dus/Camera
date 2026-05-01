@@ -41,6 +41,10 @@ void servo_sort_with(Servo *servo, const char *color);
 void servo_module_init(unsigned int pin);
 void servo_scoop(void);
 void servo_sort(const char *color);
+void servo_chamber_center(Servo *servo);
 Servo *servo_get_default(void);
+void servo_chamber_gbpass(Servo *servo);
+void servo_chamber_redpass(Servo *servo);
+
 
 #endif
