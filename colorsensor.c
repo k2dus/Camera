@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "global.h"
 
 #define TCS34725_COMMAND_BIT 0x80
 
@@ -104,7 +105,7 @@ bool tcs34725_set_active(TCS34725 *sensor, bool value) {
         if (!tcs34725_write8(sensor, TCS34725_REGISTER_ENABLE, (unsigned char)(enable | TCS34725_ENABLE_PON))) {
             return false;
         }
-        sleep_ms(3);
+        sleepcheck(3);
         if (!tcs34725_write8(sensor, TCS34725_REGISTER_ENABLE, (unsigned char)(enable | TCS34725_ENABLE_PON | TCS34725_ENABLE_AEN))) {
             return false;
         }
@@ -174,7 +175,7 @@ bool tcs34725_read_raw(TCS34725 *sensor, tcs34725_raw_data_t *data) {
     }
 
     while (!tcs34725_valid(sensor)) {
-        sleep_ms((unsigned int)(sensor->integration_time_ms + 0.9f));
+        sleepcheck((unsigned int)(sensor->integration_time_ms + 0.9f));
     }
 
     bool ok = tcs34725_register16(sensor, TCS34725_REGISTER_RDATA, &data->r) &&

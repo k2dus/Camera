@@ -1,6 +1,7 @@
 #include "compass.h"
 
 #include <math.h>
+#include "global.h"
 
 bool compass_init(Compass *compass, i2c_inst_t *i2c, float declination_degrees) {
     compass->filtered_magx = 0.0f;

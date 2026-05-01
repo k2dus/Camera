@@ -7,6 +7,7 @@
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 #include "pico/stdlib.h"
+#include "global.h"
 
 #define SERVO_DEFAULT_PWM_FREQ 50.0f
 #define SERVO_DEFAULT_MIN_U16_DUTY 1802
@@ -112,7 +113,7 @@ void scoop_up(Servo *servo) {
     }
 
     servo_move(servo, 145.0f);
-    sleep_ms(50);
+    sleepcheck(50);
 }
 
 void scoop_down(Servo *servo){    
@@ -120,7 +121,7 @@ void scoop_down(Servo *servo){
         return;
     }
     servo_move(servo, 40.0f);
-    sleep_ms(500);
+    sleepcheck(500);
 }
 
 void servo_sort_with(Servo *servo, const char *color) {
@@ -131,11 +132,11 @@ void servo_sort_with(Servo *servo, const char *color) {
     if (strcmp(color, "BLUE") == 0 || strcmp(color, "GREEN") == 0) {
         printf("opening g/b\n");
         servo_move(servo, 150.0f);
-        sleep_ms(1000);
+        sleepcheck(1000);
     } else if (strcmp(color, "RED") == 0) {
         printf("opening red\n");
         servo_move(servo, 70.0f);
-        sleep_ms(1000);
+        sleepcheck(1000);
     }
 }
 

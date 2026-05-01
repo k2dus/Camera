@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#include "hardware/i2c.h"
+#include "ak8963.h"
 #include "mpu9250.h"
 
 typedef struct {

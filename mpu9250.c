@@ -1,6 +1,7 @@
 #include "mpu9250.h"
 
 #include "pico/stdlib.h"
+#include "global.h"
 
 #define MPU9250_REG_INT_PIN_CFG 0x37
 #define MPU9250_REG_USER_CTRL 0x6A
@@ -53,7 +54,7 @@ bool mpu9250_init(MPU9250 *sensor, i2c_inst_t *i2c) {
     if (!mpu6050_write_u8(&sensor->mpu6050, MPU9250_REG_INT_PIN_CFG, reg)) {
         return false;
     }
-    sleep_ms(10);
+    sleepcheck(10);
 
     ak8963_vector_t offset = {0.0f, 0.0f, 0.0f};
     ak8963_vector_t scale = {1.0f, 1.0f, 1.0f};

@@ -1,6 +1,7 @@
 #include "mpu6050.h"
 
 #include "pico/stdlib.h"
+#include "global.h"
 
 #define MPU6050_REG_GYRO_CONFIG 0x1B
 #define MPU6050_REG_ACCEL_CONFIG 0x1C
@@ -168,7 +169,7 @@ bool mpu6050_calibrate_gyro(MPU6050 *sensor, int count, int delay_ms, mpu6050_ve
     float ox = 0.0f, oy = 0.0f, oz = 0.0f;
 
     while (count > 0) {
-        sleep_ms(delay_ms);
+        sleepcheck(delay_ms);
         mpu6050_vector_t gyro;
         if (!mpu6050_get_gyro(sensor, &gyro)) {
             return false;

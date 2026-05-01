@@ -102,6 +102,8 @@ MotorNoEncoder motor;
 TCS34725 sensor;
 Servo scoop;
 Servo sorter;
+Compass compass;
+float enemy_goal_heading = -1.0f; // heading (degrees, 0-360) recorded at startup when facing enemy goal
 bool beam_was_broken = false;
 bool searching = true;
 struct repeating_timer timer;
@@ -119,6 +121,8 @@ volatile uint8_t collision_hits_left = 0;
 volatile uint8_t collision_hits_right = 0;
 volatile int L_collision_count = 0;
 volatile int R_collision_count = 0;
+
+void collisionDetected();
 
 void sleepcheck(int x){
     double reps = x/100;
@@ -431,8 +435,20 @@ void initalizeEverything() {
 
     // COMPASS / MAGNETOMETER INIT (commented out for now)
     const float lubbock_declination_deg = -5.44f;
-    Compass compass;
     bool compass_ok = compass_init(&compass, COLOR_I2C_PORT, lubbock_declination_deg);
+    if (compass_ok) {
+        float raw_h = 0.0f;
+        // Warm up the low-pass filter with a few reads before storing the reference
+        for (int i = 0; i < 10; i++) {
+            compass_read_heading(&compass, &raw_h, NULL);
+            sleep_ms(20);
+        }
+        if (compass_read_heading(&compass, &enemy_goal_heading, NULL)) {
+            printf("Enemy goal heading stored: %.1f deg\n", enemy_goal_heading);
+        }
+    } else {
+        printf("Compass init failed\n");
+    }
 
     // NOTE: Distance sensor triggers need regular pulses to work
     // Ensure hcsr04_send_pulse_and_wait() is called periodically in main loop
@@ -608,26 +624,38 @@ void state_capture(void) { //Search and Capture
     } motor_noencoder_move(&motor, 0, false, false);
 
 }
+// Returns the smallest angular difference between two headings (0-360), range [0, 180]
+static float heading_diff(float a, float b) {
+    float d = fabsf(a - b);
+    if (d > 180.0f) d = 360.0f - d;
+    return d;
+}
+
 void state_deposit(void) { // SCORE red or green
-  
     bool oriented_towards_enemy_goal = false;
     bool oriented_towards_own_goal = false;
 
+    // Determine orientation using compass vs startup (enemy-goal) heading.
+    // Goal is 3 ft wide (91.44 cm) on a 7 ft field (213.36 cm), centered.
+    // Use 45 deg tolerance to cover the goal arc from scoring range.
+    if (enemy_goal_heading >= 0.0f) {
+        float current_heading = 0.0f;
+        if (compass_read_heading(&compass, &current_heading, NULL)) {
+            float own_goal_heading = fmodf(enemy_goal_heading + 180.0f, 360.0f);
+            if (heading_diff(current_heading, enemy_goal_heading) <= 45.0f) {
+                oriented_towards_enemy_goal = true;
+            } else if (heading_diff(current_heading, own_goal_heading) <= 45.0f) {
+                oriented_towards_own_goal = true;
+            }
+            printf("Deposit: current=%.1f enemy_ref=%.1f -> enemy=%d own=%d\n",
+                   current_heading, enemy_goal_heading,
+                   oriented_towards_enemy_goal, oriented_towards_own_goal);
+        }
+    }
+
     // Score either the blue/green or red balls in storage
     
-    // Orient towards correct goal, ball color dependent (LEFT == GREEN/BLUE, RIGHT == RED)
-    // Travel to correct distance from goal, somethinng like this:
 
-    // Stay inside the horizontal window of a centered 3ft goal on a 7ft field.
-    //     if (x_pos < GOAL_MIN_X_CM) {
-    //         turn(1, 12, 85);
-    //         move(1, 20, 85);
-    //         turn(0, 12, 85);
-    //     } else if (x_pos > GOAL_MAX_X_CM) {
-    //         turn(0, 12, 85);
-    //         move(1, 20, 85);
-    //         turn(1, 12, 85);
-    //     }
 
     // Kick on correct flywheel using if
     if(oriented_towards_enemy_goal) {

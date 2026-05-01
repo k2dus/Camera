@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "pico/stdlib.h"
+#include "global.h"
 
 #define AK8963_WIA 0x00
 #define AK8963_HXL 0x03
@@ -174,7 +175,7 @@ bool ak8963_calibrate(AK8963 *sensor, int count, int delay_ms, ak8963_vector_t *
     float maxz = reading.z;
 
     while (count > 0) {
-        sleep_ms(delay_ms);
+        sleepcheck(delay_ms);
         if (!ak8963_get_magnetic(sensor, &reading)) {
             return false;
         }

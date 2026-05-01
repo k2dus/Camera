@@ -5,6 +5,7 @@
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 #include "pico/stdlib.h"
+#include "global.h"
 
 static bool motor_noencoder_fault_pin_valid(unsigned int pin) {
     return pin != MOTOR_NOENCODER_NO_FAULT_PIN;

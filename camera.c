@@ -9,6 +9,7 @@
 #include "hardware/i2c.h"
 #include "pico/bootrom.h"
 #include <pico/bootrom.h>
+#include "global.h"
 
 // ===== PIN CONFIGURATION =====
 #define SPI_PORT spi0           // SPI channel 0 (camera data)
@@ -116,7 +117,7 @@ void camera_bus_diagnostic(void) {
     bool spi_ok = true;
     for (int i = 0; i < 2; i++) {
         w_reg(0x00, patterns[i]);
-        sleep_ms(1);
+        sleepcheck(1);
         uint8_t got = r_reg(0x00);
         if (got != patterns[i]) {
             spi_ok = false;
@@ -231,9 +232,9 @@ void init_cam() {
    
     // Perform hardware reset
     w_reg(0x07, 0x80);  // pull reset bit
-    sleep_ms(100);
+    sleepcheck(100);
     w_reg(0x07, 0x00);  // release reset bit
-    sleep_ms(100);
+    sleepcheck(100);
 
     // Camera register init table: pairs of (register_address, register_value)
     // These configure resolution, color format, autofocus, etc.
@@ -253,9 +254,9 @@ void init_cam() {
             return;
         }
         if (regs[i][0] == 0x12 && regs[i][1] == 0x80) {
-            sleep_ms(50);  // reset takes longer
+            sleepcheck(50);  // reset takes longer
         } else {
-            sleep_ms(2);   // normal delay between regs
+            sleepcheck(2);   // normal delay between regs
         }
     }
 
@@ -270,7 +271,7 @@ void init_cam() {
 // --- BLOB FINDING AND ANALYSIS ---
 static bool find_blob_for_target(const char *targetcolor, int *out_x, int *out_y) {
     w_reg(0x04, 0x01); // clear flag
-    sleep_ms(2);
+    sleepcheck(2);
     w_reg(0x04, 0x02); // capture new frame
 
     uint32_t start_time = to_ms_since_boot(get_absolute_time());
@@ -278,7 +279,7 @@ static bool find_blob_for_target(const char *targetcolor, int *out_x, int *out_y
         if (to_ms_since_boot(get_absolute_time()) - start_time > 1000) {
             // Retry once after clearing stale FIFO state.
             w_reg(0x04, 0x01);
-            sleep_ms(10);
+            sleepcheck(10);
             w_reg(0x04, 0x02);
             start_time = to_ms_since_boot(get_absolute_time());
 
