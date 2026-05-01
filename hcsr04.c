@@ -1,7 +1,4 @@
-#include "hcsr04.h"
-
-#include "hardware/gpio.h"
-#include "pico/stdlib.h"
+#include "global.h"
 
 #define HCSR04_DEFAULT_ECHO_TIMEOUT_US (500u * 2u * 30u)
 

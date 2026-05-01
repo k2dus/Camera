@@ -1,6 +1,4 @@
-#include "encoder.h"
-
-#include "hardware/gpio.h"
+#include "global.h"
 
 #define ENCODER_MAX_PIN 30
 #define _USE_MATH_DEFINES

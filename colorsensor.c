@@ -1,8 +1,4 @@
-#include "colorsensor.h"
-
-#include <math.h>
-#include <stdio.h>
-#include "pico/stdlib.h"
+#include "global.h"
 
 #define TCS34725_COMMAND_BIT 0x80
 

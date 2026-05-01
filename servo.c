@@ -1,12 +1,4 @@
-#include "servo.h"
-
-#include <math.h>
-#include <stdio.h>
-#include <string.h>
-
-#include "hardware/gpio.h"
-#include "hardware/pwm.h"
-#include "pico/stdlib.h"
+#include "global.h"
 
 #define SERVO_DEFAULT_PWM_FREQ 50.0f
 #define SERVO_DEFAULT_MIN_U16_DUTY 1802

@@ -1,6 +1,4 @@
-#include "mpu9250.h"
-
-#include "pico/stdlib.h"
+#include "global.h"
 
 #define MPU9250_REG_INT_PIN_CFG 0x37
 #define MPU9250_REG_USER_CTRL 0x6A

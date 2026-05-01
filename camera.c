@@ -1,14 +1,4 @@
-#include <stdio.h>
-#include <math.h>
-#include <stdint.h>
-#include <string.h>
-
-#include "camera.h"
-#include "pico/stdlib.h"
-#include "hardware/spi.h"
-#include "hardware/i2c.h"
-#include "pico/bootrom.h"
-#include <pico/bootrom.h>
+#include "global.h"
 
 // ===== PIN CONFIGURATION =====
 #define SPI_PORT spi0           // SPI channel 0 (camera data)

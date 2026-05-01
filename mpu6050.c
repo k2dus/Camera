@@ -1,6 +1,4 @@
-#include "mpu6050.h"
-
-#include "pico/stdlib.h"
+#include "global.h"
 
 #define MPU6050_REG_GYRO_CONFIG 0x1B
 #define MPU6050_REG_ACCEL_CONFIG 0x1C

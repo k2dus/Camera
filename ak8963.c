@@ -1,8 +1,4 @@
-#include "ak8963.h"
-
-#include <stdio.h>
-
-#include "pico/stdlib.h"
+#include "global.h"
 
 #define AK8963_WIA 0x00
 #define AK8963_HXL 0x03
