@@ -95,8 +95,10 @@ Servo sorter;
 Servo chamber_stop;
 Compass compass;
 
-
-float enemy_goal_heading = -1.0f; // heading (degrees, 0-360) recorded at startup when facing enemy goal
+int enemy_goal_x = 105; // heading (degrees, 0-360) recorded at startup when facing enemy goal
+int enemy_goal_y = 365;
+int own_goal_x = 105;
+int own_goal_y = 0;
 bool beam_was_broken = false;
 bool searching = true;
 struct repeating_timer timer;
@@ -195,105 +197,6 @@ void dist_callback(uint gpio, uint32_t events) {
 #define GOAL_HALF_WIDTH_CM (GOAL_WIDTH_CM * 0.5f)
 #define GOAL_MIN_X_CM (FIELD_CENTER_X_CM - GOAL_HALF_WIDTH_CM)
 #define GOAL_MAX_X_CM (FIELD_CENTER_X_CM + GOAL_HALF_WIDTH_CM)
-        
-    
-// }
-
-// void turn(bool direction, short angleChange, int speed) { // 0 == LEFT, 1 == RIGHT, angleChange in DEGREES, speed [0 - 100]
-//     printf("ENTERING TURN");
-//     int duty_cycle = (speed * 65535) / 100;
-//     int pastHeading = heading;
-//     if(direction == 0) {
-//         int futureHeading = pastHeading - angleChange;
-//         if (futureHeading < -180) {
-//             futureHeading += 360;
-//         }
-//         while(heading < futureHeading + 2 || heading > futureHeading - 2) {
-//             printf("heading: %d", heading);
-//             //UPDATE HEADING HERE IF NOT AUTOMATIC
-//             pwm_set_gpio_level(LREV_MOTOR, duty_cycle);
-//             pwm_set_gpio_level(LFWD_MOTOR, 0);
-//             pwm_set_gpio_level(RFWD_MOTOR, duty_cycle);
-//             pwm_set_gpio_level(RREV_MOTOR, 0);
-//             sleepcheck(5);
-//         }
-//         pwm_set_gpio_level(LREV_MOTOR, 0);
-//         pwm_set_gpio_level(LFWD_MOTOR, 0);
-//         pwm_set_gpio_level(RFWD_MOTOR, 0);
-//         pwm_set_gpio_level(RREV_MOTOR, 0);
-//         printf("EXITED TURN");
-//         return;
-//     }
-//     else {
-//         int futureHeading = pastHeading + angleChange;
-//         if (futureHeading > 180) {
-//             futureHeading -= 360;
-//         }
-//         while(heading < futureHeading + 2 || heading > futureHeading - 2) {
-//             //UPDATE HEADING HERE IF NOT AUTOMATIC
-//             pwm_set_gpio_level(LREV_MOTOR, 0);
-//             pwm_set_gpio_level(LFWD_MOTOR, duty_cycle);
-//             pwm_set_gpio_level(RFWD_MOTOR, 0);
-//             pwm_set_gpio_level(RREV_MOTOR, duty_cycle);
-//             sleepcheck(5);
-//         }
-//         pwm_set_gpio_level(LREV_MOTOR, 0);
-//         pwm_set_gpio_level(LFWD_MOTOR, 0);
-//         pwm_set_gpio_level(RFWD_MOTOR, 0);
-//         pwm_set_gpio_level(RREV_MOTOR, 0);
-//         printf("EXITED TURN");
-//         return;
-//     }
-//     printf("EXITED TURN");
-//     return;
-// }
-
-
-// void move(bool DIR, int distance, int speed) { //DIR 1 = FWD, 0 = REV, distance in cm, speed [0 - 100]
-//     int start_pos_x = x_pos;
-//     int start_pos_y = y_pos;
-//     int leftCount = 0;
-//     int rightCount = 0;
-//     int heading = 0; //IMU HEADING NUMBER?
-//     int x_distance = distance * cos(heading * M_PI / 180);
-//     int y_distance = distance * sin(heading * M_PI / 180);
-
-
-//     // Set direction pins
-//     while((x_pos < start_pos_x + x_distance) && (x_pos < max_x) && (y_pos < max_y) && (y_pos > min_y) && (x_pos > min_x)) {
-//         //UPDATE ENCODER COUNTS AND HEADING
-//         leftCount = 0; //encoder_delta(&left_enc);
-//         rightCount = 0; //encoder_delta(&lright_enc);
-//         x_pos += ((leftCount + rightCount) / 2) * cos(heading * M_PI / 180) * (8*M_PI/1920); // 8cm wheel diameter, 1920 counts per revolution
-//         y_pos += ((leftCount + rightCount) / 2) * sin(heading * M_PI / 180) * (8*M_PI/1920);
-
-
-//         // Set PWM duty cycle based on speed
-//         int duty_cycle = (speed * 65535) / 100; // Convert percentage to 16-bit value
-//         if (DIR) { // Forward PWM
-//             pwm_set_gpio_level(LFWD_MOTOR, duty_cycle);
-//             pwm_set_gpio_level(LREV_MOTOR, 0); }
-//         else {
-//             pwm_set_gpio_level(LFWD_MOTOR, 0);
-//             pwm_set_gpio_level(LREV_MOTOR, duty_cycle); }
-//         if (DIR) {
-//             pwm_set_gpio_level(RFWD_MOTOR, duty_cycle);
-//             pwm_set_gpio_level(RREV_MOTOR, 0); }
-//         else {
-//             pwm_set_gpio_level(RFWD_MOTOR, 0);
-//             pwm_set_gpio_level(RREV_MOTOR, duty_cycle); }
-//         //go direction for at least 10ms.
-//         sleepcheck(10);
-//     }
-//     //When we have reached the target position,
-//     //or hit a boundary, stop the motors
-//     pwm_set_gpio_level(LFWD_MOTOR, 0);
-//     pwm_set_gpio_level(LREV_MOTOR, 0);
-//     pwm_set_gpio_level(RFWD_MOTOR, 0);
-//     pwm_set_gpio_level(RREV_MOTOR, 0);
-//     return;
-// }
-
 
 // //----------------STATE MACHINES----------------------
 
@@ -377,31 +280,29 @@ int angle_diff(int target, int current) {
     return diff;
 }
 
-void turn(bool direction, short angleChange) {
-    int start = compass_get_relative_heading(&compass);
-    int target;
+void turn(short desiredHeading) {
+    while (1) {
+        int current = compass_get_relative_heading(&compass);
+        int diff = angle_diff(desiredHeading, current);
 
-    if (direction) { // LEFT
-        target = normalize_heading(start - angleChange);
-
-        while (abs(angle_diff(target, compass_get_relative_heading(&compass))) > 5) {
-            pwm_set_gpio_level(LREV_MOTOR, 15000);
-            pwm_set_gpio_level(LFWD_MOTOR, 0);
-            pwm_set_gpio_level(RFWD_MOTOR, 15000);
-            pwm_set_gpio_level(RREV_MOTOR, 0);
-            sleep_ms(15);
+        if (abs(diff) <= 5) {
+            break; // close enough
         }
-
-    } else { // RIGHT
-        target = normalize_heading(start + angleChange);
-
-        while (abs(angle_diff(target, compass_get_relative_heading(&compass))) > 5) {
+        if (diff > 0) {
+            // turn RIGHT
             pwm_set_gpio_level(LREV_MOTOR, 0);
             pwm_set_gpio_level(LFWD_MOTOR, 15000);
             pwm_set_gpio_level(RFWD_MOTOR, 0);
             pwm_set_gpio_level(RREV_MOTOR, 15000);
-            sleep_ms(15);
+        } else {
+            // turn LEFT
+            pwm_set_gpio_level(LREV_MOTOR, 15000);
+            pwm_set_gpio_level(LFWD_MOTOR, 0);
+            pwm_set_gpio_level(RFWD_MOTOR, 15000);
+            pwm_set_gpio_level(RREV_MOTOR, 0);
         }
+
+        sleep_ms(15);
     }
 
     // STOP motors
@@ -409,7 +310,8 @@ void turn(bool direction, short angleChange) {
     pwm_set_gpio_level(LFWD_MOTOR, 0);
     pwm_set_gpio_level(RFWD_MOTOR, 0);
     pwm_set_gpio_level(RREV_MOTOR, 0);
-    encoder_delta_cm(&left_enc); //Throw away encoder values 
+
+    encoder_delta_cm(&left_enc);
     encoder_delta_cm(&right_enc);
 }
 
@@ -418,6 +320,12 @@ void initializeEverything() {
     stdio_init_all();
     sleep_ms(1500);
 
+    gpio_init(GREENFLYWHEEL);
+    gpio_set_dir(GREENFLYWHEEL, GPIO_OUT);
+    gpio_init(REDFLYWHEEL);
+    gpio_set_dir(REDFLYWHEEL, GPIO_OUT);
+    gpio_put(GREENFLYWHEEL, 1);
+    gpio_put(REDFLYWHEEL, 1);
 
     motor_noencoder_init(
         &motor,
@@ -516,7 +424,7 @@ void initializeEverything() {
     }
 
     compass_init_reference(&compass);
-    enemy_goal_heading = compass_get_relative_heading(&compass);
+    compass_get_relative_heading(&compass);
     // COMPASS / MAGNETOMETER INIT (commented out for now)
     // if (compass_ok) {
     //     float raw_h = 0.0f;
@@ -725,7 +633,7 @@ void state_capture(void) { //Search and Capture
                 }
             }
             scoop_down(&scoop);
-        // TEST FLYLEEH
+        // TEST FLY
             if(red_in_chamber >=1) {
                 gpio_put(GREENFLYWHEEL, 0);
                 gpio_put(REDFLYWHEEL, 1);
@@ -761,75 +669,40 @@ float heading_diff(float a, float b) {
     return d;
 }
 
-
 void state_deposit(void) { // SCORE red or green
-    bool oriented_towards_enemy_goal = false;
-    bool oriented_towards_own_goal = false;
 
-
-    // Determine orientation using compass vs startup (enemy-goal) heading.
-    // Goal is 3 ft wide (91.44 cm) on a 7 ft field (213.36 cm), centered.
-    // Use 45 deg tolerance to cover the goal arc from scoring range.
-    if (enemy_goal_heading >= 0.0f) {
-        float current_heading = 0.0f;
-        if (compass_read_heading(&compass, &current_heading, NULL)) {
-            float own_goal_heading = fmodf(enemy_goal_heading + 180.0f, 360.0f);
-            if (heading_diff(current_heading, enemy_goal_heading) <= 45.0f) {
-                oriented_towards_enemy_goal = true;
-            } else if (heading_diff(current_heading, own_goal_heading) <= 45.0f) {
-                oriented_towards_own_goal = true;
-            }
-            printf("Deposit: current=%.1f enemy_ref=%.1f -> enemy=%d own=%d\n",
-                   current_heading, enemy_goal_heading,
-                   oriented_towards_enemy_goal, oriented_towards_own_goal);
+    while(red_in_chamber > 0 || gb_in_chamber > 0){
+        if(red_in_chamber >= 1){
+            double scoreheading = atan((enemy_goal_x - x_pos)/(enemy_goal_y - y_pos));
+            printf("score heading: %f", scoreheading);
+            turn(scoreheading);
+            
+            gpio_put(GREENFLYWHEEL, 1);
+            gpio_put(REDFLYWHEEL, 0);
+            sleep_ms(4000);
+            servo_chamber_redpass(&chamber_stop);
+            sleep_ms(8000);
+            servo_chamber_center(&chamber_stop);
+            gpio_put(REDFLYWHEEL, 1); // Shut flywheel back off
+            red_in_chamber = 0;
         }
-    }
-    // Score either the blue/green or red balls in storage
-   
-    // Kick on correct flywheel using if
-    if(oriented_towards_enemy_goal) {
-        gpio_put(GREENFLYWHEEL, 0);
-        gpio_put(REDFLYWHEEL, 1);
-        sleep_ms(4000);
-        servo_chamber_redpass(&chamber_stop);
-        sleep_ms(8000);
-        servo_chamber_center(&chamber_stop);
-        gpio_put(REDFLYWHEEL, 0); // Shut flywheel back off
-        red_in_chamber = 0;
-    } else if(oriented_towards_own_goal) {
-        gpio_put(REDFLYWHEEL, 0);
-        gpio_put(GREENFLYWHEEL, 1);
-        sleep_ms(4000);
-        servo_chamber_gbpass(&chamber_stop);
-        sleep_ms(8000);
-        servo_chamber_center(&chamber_stop);
-        gpio_put(GREENFLYWHEEL, 0);
-        gb_in_chamber = 0;
+        if(gb_in_chamber >= 1){
+            double scoreheading = atan((own_goal_x - x_pos)/(own_goal_y - y_pos));
+            printf("score heading: %f", scoreheading);
+            turn(scoreheading);
+
+            gpio_put(REDFLYWHEEL, 1);
+            gpio_put(GREENFLYWHEEL, 0);
+            sleep_ms(4000);
+            servo_chamber_gbpass(&chamber_stop);
+            sleep_ms(8000);
+            servo_chamber_center(&chamber_stop);
+            gpio_put(GREENFLYWHEEL, 1);
+            gb_in_chamber = 0;
+        }
     }
     
     current_state = state_capture; // Back to search & capture state
-
-
-    // void state_deposit(void) { // SCORE
-//     if (chamber_ball_count <= 0) {
-//         current_state = state_capture;
-//         return;
-//     }
-
-
-//     if (!is_ball(captured_ball_label)) {
-//         current_state = state_capture;
-//         return;
-//     }
-
-
-//     if (is_enemy_goal_ball(captured_ball_label)) {
-//         // RED: shoot toward the opponent goal (forward from starting orientation).
-//     } else if (is_own_goal_ball(captured_ball_label)) {
-//         // GREEN/BLUE: shoot back toward our own goal.
-//         turn(1, 180, 90);
-//     }
-// }  
 }
 
 
@@ -851,12 +724,7 @@ int main() {
     
     
     // FLYWHEEL INIT
-    gpio_init(GREENFLYWHEEL);
-    gpio_set_dir(GREENFLYWHEEL, GPIO_OUT);
-    gpio_init(REDFLYWHEEL);
-    gpio_set_dir(REDFLYWHEEL, GPIO_OUT);
-    gpio_put(GREENFLYWHEEL, 1);
-    gpio_put(REDFLYWHEEL, 1);
+    
     // Initialize hardware
     initializeEverything();
     // Initialize state machine
@@ -864,9 +732,9 @@ int main() {
     // while(current_state) {
     //     current_state();
     // }
-    printf("MOVE");
+    printf("SERVO TEST TEST TEST");
     
-    motor_noencoder_move(&motor, 0.5, true, true);
+    
     // Main loop
     while (true) {
         //run the current state
@@ -874,35 +742,39 @@ int main() {
         // sleep_ms(5000);
         // servo_chamber_center(&chamber_stop);
         
-        // if(true == false) {
-        //     gpio_put(GREENFLYWHEEL, 1);
-        //     gpio_put(REDFLYWHEEL, 0);
-        //     sleep_ms(4000);
-        //     servo_chamber_redpass(&chamber_stop);
-        //     sleep_ms(8000);
-        //     servo_chamber_center(&chamber_stop);
-        //     gpio_put(REDFLYWHEEL, 1); // Shut flywheel back off
-        //     red_in_chamber = 0;
-        // }
-        // if(true) {
-        //     gpio_put(REDFLYWHEEL, 1);
-        //     gpio_put(GREENFLYWHEEL, 0);
-        //     sleep_ms(6000);
-        //     servo_chamber_gbpass(&chamber_stop);
-        //     sleep_ms(3000);
-        //     servo_chamber_center(&chamber_stop);
-        //     gpio_put(GREENFLYWHEEL, 1);
-        //     gb_in_chamber = 0;
-        // }
-        printf("working..\r\n");
-
-        // MOTOR AND ENCODER
-        motor_noencoder_move(&motor, .5, true, true);
-        sleep_ms(200);
-        printf("heading: %d \n "
-                "x pos: %d \n"
-                "y_pos: %d \n", heading, x_pos, y_pos);
+        if(true) {
+            gpio_put(GREENFLYWHEEL, 1);
+            gpio_put(REDFLYWHEEL, 0);
+            sleep_ms(4000);
+            servo_chamber_redpass(&chamber_stop);
+            sleep_ms(8000);
+            servo_chamber_center(&chamber_stop);
+            gpio_put(REDFLYWHEEL, 1); // Shut flywheel back off
+            red_in_chamber = 0;
+            printf("red test done");
         }
+        if(true) {
+            gpio_put(REDFLYWHEEL, 1);
+            gpio_put(GREENFLYWHEEL, 0);
+            sleep_ms(6000);
+            servo_chamber_gbpass(&chamber_stop);
+            sleep_ms(3000);
+            servo_chamber_center(&chamber_stop);
+            gpio_put(GREENFLYWHEEL, 1);
+            sleep_ms(2000);
+            gb_in_chamber = 0;
+            printf("green test done");
+        }
+        // printf("working..\r\n");
 
-    return 0;
+        // // MOTOR AND ENCODER
+        // motor_noencoder_move(&motor, .5, true, true);
+        // sleep_ms(200);
+        // printf("heading: %d \n "
+        //         "x pos: %d \n"
+        //         "y_pos: %d \n", heading, x_pos, y_pos);
+        // }
+
+        return 0;
+    }
 }
