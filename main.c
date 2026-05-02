@@ -1,4 +1,5 @@
 #include "global.h"
+#include <stdlib.h>
 
 // ===== GLOBAL VARIABLE DEFINITIONS =====
 volatile int x_pos = 105;
@@ -40,12 +41,12 @@ Encoder right_enc;
 
 #define scoop_PIN 1
 #define sorter_PIN 0
-#define GOALIE_PIN 12
+// #define GOALIE_PIN 
 #define BEAM_SENSOR_PIN 13
 #define BEAM_BROKEN_STATE 0
 #define GREENFLYWHEEL 17
 #define REDFLYWHEEL 16
-#define CHAMBER_STOP_PIN 22
+#define CHAMBER_STOP_PIN 12
 
 
 //        ┌──────────────────────────────┐
@@ -368,25 +369,7 @@ static bool is_ball(const char *label) {
 // }
 
 
-float heading0 = 0.0f;
-float normalize_heading(float h) {
-    while (h > 180.0f) h -= 360.0f;
-    while(h < -180.0f) h += 360.0f;
-    return h;
-}
-void compass_init_reference(Compass *compass) {
-    float initial_heading;
 
-    compass_read_heading(compass, &initial_heading, NULL);
-    heading0 = initial_heading;
-}
-float compass_get_relative_heading(Compass *compass) {
-    float heading;
-    compass_read_heading(compass, &heading, NULL);
-    
-    float relative = heading - heading0;
-    return normalize_heading(relative);
-}
 int angle_diff(int target, int current) {
     int diff = target - current;
     while (diff > 180) diff -= 360;
@@ -395,34 +378,46 @@ int angle_diff(int target, int current) {
 }
 
 void turn(bool direction, short angleChange) {
-    int pastHeading = compass_get_relative_heading(&compass);
-    if (direction == true) { //TURN LEFT
-        int futureHeading = normalize_heading((pastHeading - angleChange)); // heading (-180, 180)
-        while(compass_get_relative_heading(&compass) < futureHeading) {
+    int start = compass_get_relative_heading(&compass);
+    int target;
+
+    if (direction) { // LEFT
+        target = normalize_heading(start - angleChange);
+
+        while (abs(angle_diff(target, compass_get_relative_heading(&compass))) > 5) {
             pwm_set_gpio_level(LREV_MOTOR, 15000);
             pwm_set_gpio_level(LFWD_MOTOR, 0);
             pwm_set_gpio_level(RFWD_MOTOR, 15000);
             pwm_set_gpio_level(RREV_MOTOR, 0);
             sleep_ms(15);
         }
-    } else {
-        int futureHeading = normalize_heading(pastHeading + angleChange);
-        while(compass_get_relative_heading(&compass) > futureHeading) {
-             pwm_set_gpio_level(LREV_MOTOR, 0);
-             pwm_set_gpio_level(LFWD_MOTOR, 15000);
-             pwm_set_gpio_level(RFWD_MOTOR, 0);
-             pwm_set_gpio_level(RREV_MOTOR, 15000);
-             sleep_ms(15);
+
+    } else { // RIGHT
+        target = normalize_heading(start + angleChange);
+
+        while (abs(angle_diff(target, compass_get_relative_heading(&compass))) > 5) {
+            pwm_set_gpio_level(LREV_MOTOR, 0);
+            pwm_set_gpio_level(LFWD_MOTOR, 15000);
+            pwm_set_gpio_level(RFWD_MOTOR, 0);
+            pwm_set_gpio_level(RREV_MOTOR, 15000);
+            sleep_ms(15);
         }
-        encoder_delta_cm(&left_enc);
-        encoder_delta_cm(&right_enc);
     }
+
+    // STOP motors
+    pwm_set_gpio_level(LREV_MOTOR, 0);
+    pwm_set_gpio_level(LFWD_MOTOR, 0);
+    pwm_set_gpio_level(RFWD_MOTOR, 0);
+    pwm_set_gpio_level(RREV_MOTOR, 0);
+    encoder_delta_cm(&left_enc); //Throw away encoder values 
+    encoder_delta_cm(&right_enc);
 }
 
 void initializeEverything() {
     // INIT
     stdio_init_all();
     sleep_ms(1500);
+
 
     motor_noencoder_init(
         &motor,
@@ -440,8 +435,7 @@ void initializeEverything() {
     sleep_ms(1000);
 
     // ENCODER INIT
-    encoder_init(&left_enc, LChannelA, LChannelB);
-    encoder_init(&right_enc, RChannelA, RChannelB);
+    
 
     // GPIO INIT
     sleep_ms(1000);
@@ -568,6 +562,8 @@ void initializeEverything() {
     // gpio_init(RREV_MOTOR);
     // gpio_set_dir(RREV_MOTOR, GPIO_OUT);
     // gpio_put(RREV_MOTOR, false);
+    encoder_init(&left_enc, LChannelA, LChannelB);
+    encoder_init(&right_enc, RChannelA, RChannelB);
 }
 void collisionDetected() {
     if(COLLISION_PIN == DIST_ECHO_PIN) {
@@ -728,7 +724,27 @@ void state_capture(void) { //Search and Capture
                 }
             }
             scoop_down(&scoop);
-           
+
+            if(red_in)cha) {
+                gpio_put(GREENFLYWHEEL, 0);
+                gpio_put(REDFLYWHEEL, 1);
+                sleep_ms(4000);
+                servo_chamber_redpass(&chamber_stop);
+                sleep_ms(8000);
+                servo_chamber_center(&chamber_stop);
+                gpio_put(REDFLYWHEEL, 0); // Shut flywheel back off
+                red_in_chamber = 0;
+            } else if(oriented_towards_own_goal) {
+                gpio_put(REDFLYWHEEL, 0);
+                gpio_put(GREENFLYWHEEL, 1);
+                sleep_ms(4000);
+                servo_chamber_gbpass(&chamber_stop);
+                sleep_ms(8000);
+                servo_chamber_center(&chamber_stop);
+                gpio_put(GREENFLYWHEEL, 0);
+                gb_in_chamber = 0;
+            }
+
             printf("while loop over");
         }
         beam_was_broken = beam_broken;
@@ -844,8 +860,12 @@ int main() {
     initializeEverything();
     // Initialize state machine
     // current_state = state_capture;
-
-    // motor_noencoder_move(&motor, 0.5, true, true);
+    // while(current_state) {
+    //     current_state();
+    // }
+    printf("MOVE");
+    
+    motor_noencoder_move(&motor, 0.5, true, true);
     // Main loop
     while (true) {
         //run the current state
@@ -878,11 +898,10 @@ int main() {
         // MOTOR AND ENCODER
         motor_noencoder_move(&motor, .5, true, true);
         sleep_ms(200);
-        // printf("heading: %d \n "
-        //         "x pos: %d \n"
-        //         "y_pos: %d \n", heading, x_pos, y_pos);
-    }
-
+        printf("heading: %d \n "
+                "x pos: %d \n"
+                "y_pos: %d \n", heading, x_pos, y_pos);
+        }
 
     return 0;
 }

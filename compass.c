@@ -4,6 +4,7 @@ bool compass_init(Compass *compass, i2c_inst_t *i2c, float declination_degrees) 
     compass->filtered_magx = 0.0f;
     compass->filtered_magy = 0.0f;
     compass->declination_degrees = declination_degrees;
+    compass->reference_heading_degrees = 0.0f;
     return mpu9250_init(&compass->sensor, i2c);
 }
 
@@ -56,4 +57,29 @@ bool compass_read_heading(Compass *compass, float *heading_degrees, float *headi
         *heading_plus_declination_degrees = with_declination;
     }
     return true;
+}
+
+void compass_init_reference(Compass *compass) {
+    float initial_heading;
+
+    if (compass_read_heading(compass, &initial_heading, NULL)) {
+        compass->reference_heading_degrees = initial_heading;
+    }
+}
+
+float normalize_heading(float h) {
+    while (h > 180.0f) h -= 360.0f;
+    while(h < -180.0f) h += 360.0f;
+    return h;
+}
+
+float compass_get_relative_heading(Compass *compass) {
+    float heading;
+
+    if (!compass_read_heading(compass, &heading, NULL)) {
+        return 0.0f; // or handle error differently
+    }
+
+    float relative = heading - compass->reference_heading_degrees;
+    return normalize_heading(relative);
 }

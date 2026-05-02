@@ -10,6 +10,7 @@ typedef struct {
     float filtered_magx;
     float filtered_magy;
     float declination_degrees;
+    float reference_heading_degrees;
 } Compass;
 
 bool compass_init(Compass *compass, i2c_inst_t *i2c, float declination_degrees);
@@ -18,4 +19,7 @@ bool compass_get_magnetic(Compass *compass, ak8963_vector_t *magnetic);
 float compass_low_pass_filter(float previous, float value);
 bool compass_read_heading(Compass *compass, float *heading_degrees, float *heading_plus_declination_degrees);
 bool compass_apply_calibration(Compass *compass, ak8963_vector_t COMPASS_OFFSET, ak8963_vector_t COMPASS_SCALE);
+void compass_init_reference(Compass *compass);
+float compass_get_relative_heading(Compass *compass);
+float normalize_heading(float h);
 #endif
