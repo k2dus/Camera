@@ -119,6 +119,15 @@ void sleepcheck(int x){
             collisionDetected();
         }
 
+        //BOUNDARY CHECK
+        
+        if ((x_pos < min_x && -90 < heading) || (x_pos > max_x && heading > 90)){
+            turn(normalize_heading(heading + 90));
+        }
+        else if ((x_pos < min_x && heading < -90) || (x_pos > max_x && heading < 90)){
+            turn(normalize_heading(heading - 90));
+        }
+        
         int slice_ms = (remaining_ms > 100) ? 100 : remaining_ms;
         sleep_ms(slice_ms);
         remaining_ms -= slice_ms;
@@ -132,6 +141,12 @@ bool timer_callback(struct repeating_timer *t) {
     gpio_put(DIST_TRIGGER_PIN, true);
     sleep_us(10);
     gpio_put(DIST_TRIGGER_PIN, false);
+    heading = compass_get_relative_heading(&compass);
+    
+    float delta_cm = (encoder_delta_cm(&left_enc) + encoder_delta_cm(&right_enc)) / 2.0f;
+    float heading_rad = heading * (float)M_PI / 180.0f;
+    x_pos += (int)(delta_cm * cosf(heading_rad));
+    y_pos += (int)(delta_cm * sinf(heading_rad));
     return true; // keep repeating
 }
 // GPIO interrupt handler for rear distance sensor (echo pin 26)
@@ -145,11 +160,9 @@ void dist_callback(uint gpio, uint32_t events) {
         return;
     }
 
-
     if (events & GPIO_IRQ_EDGE_FALL) {
         uint64_t start = (gpio == DIST_ECHO_PIN) ? pulse_start_left : pulse_start_right;
         if (start == 0) return;
-
 
         uint64_t duration = time_us_64() - start;
         int distance = (int)(((float)duration / 2.0f) / 29.1f);
@@ -249,30 +262,6 @@ static bool is_ball(const char *label) {
             strcmp(label, "GREEN") == 0);
 }
 
-
-// static bool is_enemy_goal_ball(const char *label) {
-//     return label != NULL && strcmp(label, "RED") == 0;
-// }
-
-
-// static bool is_own_goal_ball(const char *label) {
-//     return label != NULL &&
-//            (strcmp(label, "GREEN") == 0 || strcmp(label, "BLUE") == 0);
-// }
-
-
-// static bool early_deposit(uint32_t search_start_ms) {
-//     if (chamber_ball_count <= 0) {
-//         return false;
-//     }
-
-
-//     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
-//     return (now_ms - search_start_ms) >= EXTRA_SEARCH_TIMEOUT_MS;
-// }
-
-
-
 int angle_diff(int target, int current) {
     int diff = target - current;
     while (diff > 180) diff -= 360;
@@ -280,7 +269,7 @@ int angle_diff(int target, int current) {
     return diff;
 }
 
-void turn(short desiredHeading) {
+void turn(float desiredHeading) {
     while (1) {
         int current = compass_get_relative_heading(&compass);
         int diff = angle_diff(desiredHeading, current);
@@ -705,66 +694,50 @@ void state_deposit(void) { // SCORE red or green
     current_state = state_capture; // Back to search & capture state
 }
 
-
-// FUTURE STORAGE IMPLEMENTATION
-// if (chamber_ball_count < TARGET) {
-//     chamber_ball_count++;
-// }
-// captured_ball_label = blob.label;
-
-
-// if (chamber_ball_count >= TARGET) {
-//     current_state = state_deposit;
-// } else {
-//     current_state = state_capture;
-// }
-
-
 int main() {
-    
     
     // FLYWHEEL INIT
     
     // Initialize hardware
     initializeEverything();
     // Initialize state machine
-    // current_state = state_capture;
-    // while(current_state) {
-    //     current_state();
-    // }
+    current_state = state_capture;
+    while(current_state) {
+        current_state();
+    }
     printf("SERVO TEST TEST TEST");
     
     
     // Main loop
-    while (true) {
-        //run the current state
-        // current_state();
-        // sleep_ms(5000);
-        // servo_chamber_center(&chamber_stop);
+    // while (true) {
+    //     //run the current state
+    //     // current_state();
+    //     // sleep_ms(5000);
+    //     // servo_chamber_center(&chamber_stop);
         
-        if(true) {
-            gpio_put(GREENFLYWHEEL, 1);
-            gpio_put(REDFLYWHEEL, 0);
-            sleep_ms(4000);
-            servo_chamber_redpass(&chamber_stop);
-            sleep_ms(8000);
-            servo_chamber_center(&chamber_stop);
-            gpio_put(REDFLYWHEEL, 1); // Shut flywheel back off
-            red_in_chamber = 0;
-            printf("red test done");
-        }
-        if(true) {
-            gpio_put(REDFLYWHEEL, 1);
-            gpio_put(GREENFLYWHEEL, 0);
-            sleep_ms(6000);
-            servo_chamber_gbpass(&chamber_stop);
-            sleep_ms(3000);
-            servo_chamber_center(&chamber_stop);
-            gpio_put(GREENFLYWHEEL, 1);
-            sleep_ms(2000);
-            gb_in_chamber = 0;
-            printf("green test done");
-        }
+    //     if(true) {
+    //         gpio_put(GREENFLYWHEEL, 1);
+    //         gpio_put(REDFLYWHEEL, 0);
+    //         sleep_ms(4000);
+    //         servo_chamber_redpass(&chamber_stop);
+    //         sleep_ms(8000);
+    //         servo_chamber_center(&chamber_stop);
+    //         gpio_put(REDFLYWHEEL, 1); // Shut flywheel back off
+    //         red_in_chamber = 0;
+    //         printf("red test done");
+    //     }
+    //     if(true) {
+    //         gpio_put(REDFLYWHEEL, 1);
+    //         gpio_put(GREENFLYWHEEL, 0);
+    //         sleep_ms(6000);
+    //         servo_chamber_gbpass(&chamber_stop);
+    //         sleep_ms(3000);
+    //         servo_chamber_center(&chamber_stop);
+    //         gpio_put(GREENFLYWHEEL, 1);
+    //         sleep_ms(2000);
+    //         gb_in_chamber = 0;
+    //         printf("green test done");
+    //     }
         // printf("working..\r\n");
 
         // // MOTOR AND ENCODER
@@ -775,6 +748,5 @@ int main() {
         //         "y_pos: %d \n", heading, x_pos, y_pos);
         // }
 
-        return 0;
-    }
+    return 0;
 }

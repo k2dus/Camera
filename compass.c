@@ -67,9 +67,9 @@ void compass_init_reference(Compass *compass) {
     }
 }
 
-float normalize_heading(float h) {
-    while (h > 180.0f) h -= 360.0f;
-    while(h < -180.0f) h += 360.0f;
+float normalize_heading(int h) {
+    while (h > 180) h -= 360;
+    while (h < -180) h += 360;
     return h;
 }
 

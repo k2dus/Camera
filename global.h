@@ -48,5 +48,6 @@ extern Encoder left_enc;
 extern Encoder right_enc;
 
 void sleepcheck(int x);
+void turn(float desiredHeading);
 
 #endif

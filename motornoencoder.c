@@ -141,9 +141,6 @@ void motor_noencoder_move(MotorNoEncoder *motor, float speed, bool left_directio
     motor->last_ldir = left_direction;
     motor->last_rdir = right_direction;
     motor->has_last_dir = true;
-    heading = compass_get_relative_heading(&compass);
-    float delta_cm = (encoder_delta_cm(&left_enc) + encoder_delta_cm(&right_enc)) / 2.0f;
-    float heading_rad = heading * (float)M_PI / 180.0f;
-    x_pos += (int)(delta_cm * cosf(heading_rad));
-    y_pos += (int)(delta_cm * sinf(heading_rad));
+    printf("xpos: %d"
+           "ypos: %d", x_pos, y_pos);
 }

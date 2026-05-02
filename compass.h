@@ -21,5 +21,5 @@ bool compass_read_heading(Compass *compass, float *heading_degrees, float *headi
 bool compass_apply_calibration(Compass *compass, ak8963_vector_t COMPASS_OFFSET, ak8963_vector_t COMPASS_SCALE);
 void compass_init_reference(Compass *compass);
 float compass_get_relative_heading(Compass *compass);
-float normalize_heading(float h);
+float normalize_heading(int h);
 #endif
