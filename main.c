@@ -583,6 +583,8 @@ void rightPivot() {
     sleepcheck(350);
     motor_noencoder_stop_all(&motor);
     sleepcheck(50);
+    encoder_delta(&left_enc);
+    encoder_delta(&right_enc);
 }
 // State machine functions
 void state_capture(void) { //Search and Capture
@@ -713,7 +715,6 @@ void state_capture(void) { //Search and Capture
                 if (detected != NULL) {
                     printf("color sensor %s\r\n", detected);
 
-
                     if (strcmp(detected, "RED") == 0) { // Just want to track ball count for deposit state
                         red_in_chamber++; }
                     else if ((strcmp(detected, "GREEN") == 0) || (strcmp(detected, "BLUE") == 0)) {
@@ -724,8 +725,8 @@ void state_capture(void) { //Search and Capture
                 }
             }
             scoop_down(&scoop);
-
-            if(red_in)cha) {
+        // TEST FLYLEEH
+            if(red_in_chamber >=1) {
                 gpio_put(GREENFLYWHEEL, 0);
                 gpio_put(REDFLYWHEEL, 1);
                 sleep_ms(4000);
@@ -734,7 +735,7 @@ void state_capture(void) { //Search and Capture
                 servo_chamber_center(&chamber_stop);
                 gpio_put(REDFLYWHEEL, 0); // Shut flywheel back off
                 red_in_chamber = 0;
-            } else if(oriented_towards_own_goal) {
+            } else if(gb_in_chamber >= 1) {
                 gpio_put(REDFLYWHEEL, 0);
                 gpio_put(GREENFLYWHEEL, 1);
                 sleep_ms(4000);
