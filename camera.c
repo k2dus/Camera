@@ -469,6 +469,104 @@ static bool find_blob_for_target(const char *targetcolor, int *out_x, int *out_y
     return false;
 }
 
+// Returns true if the pixel looks like black masking tape.
+// Use stricter darkness and low channel spread so shadows/noise trigger less often.
+static inline bool is_line_pixel(uint16_t c16) {
+    uint8_t r = ((c16 >> 11) & 0x1F) << 3;
+    uint8_t g = ((c16 >> 5)  & 0x3F) << 2;
+    uint8_t b = (c16 & 0x1F) << 3;
+
+    uint8_t mx = r;
+    if (g > mx) mx = g;
+    if (b > mx) mx = b;
+
+    uint8_t mn = r;
+    if (g < mn) mn = g;
+    if (b < mn) mn = b;
+
+    return (mx < 45) && ((mx - mn) <= 25);
+}
+
+// Capture a frame and scan the full frame for black-tape boundary lines.
+// Returns true if a line is detected anywhere; fills *result with zone flags.
+bool detect_boundary_line(LineDetection *result) {
+    if (result == NULL) return false;
+
+    result->detected = false;
+    result->left     = false;
+    result->center   = false;
+    result->right    = false;
+    result->line_y   = -1;
+
+    // --- Capture frame ---
+    w_reg(0x04, 0x01);
+    sleep_ms(2);
+    w_reg(0x04, 0x02);
+
+    uint32_t start_time = to_ms_since_boot(get_absolute_time());
+    while (!(r_reg(0x41) & 0x08)) {
+        if (to_ms_since_boot(get_absolute_time()) - start_time > 1000) {
+            w_reg(0x04, 0x01);
+            return false;
+        }
+    }
+
+    uint32_t size = r_reg(0x42) | (r_reg(0x43) << 8) | ((r_reg(0x44) & 0x7f) << 16);
+    if (size < 5000) {
+        w_reg(0x04, 0x01);
+        return false;
+    }
+
+    // --- Read all pixels, but only analyse the top quarter ---
+    const int ZONE_W = WIDTH / 3;           // ~106 pixels per zone
+    const int ZONE_THRESHOLD = 900;         // per-zone minimum black pixels
+    const int TOTAL_THRESHOLD = 2200;       // total minimum black pixels in frame
+    const int START_Y = HEIGHT / 4;          // end of top quarter
+
+    int left_count        = 0;
+    int center_count      = 0;
+    int right_count_local = 0;
+    int total_count       = 0;
+    int topmost_y         = HEIGHT;
+
+    cs_select();
+    uint8_t cmd = 0x3C;
+    spi_write_blocking(SPI_PORT, &cmd, 1);
+
+    uint8_t pixel_buf[2];
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            spi_read_blocking(SPI_PORT, 0, pixel_buf, 2);
+            if (y >= START_Y) {
+                continue;
+            }
+            uint16_t c16 = (pixel_buf[0] << 8) | pixel_buf[1];
+            if (is_line_pixel(c16)) {
+                total_count++;
+                if (y < topmost_y) topmost_y = y;
+                if (x < ZONE_W) {
+                    left_count++;
+                } else if (x < ZONE_W * 2) {
+                    center_count++;
+                } else {
+                    right_count_local++;
+                }
+            }
+        }
+    }
+    cs_deselect();
+    w_reg(0x04, 0x01);
+
+    result->left   = (left_count >= ZONE_THRESHOLD);
+    result->center = (center_count >= ZONE_THRESHOLD);
+    result->right  = (right_count_local >= ZONE_THRESHOLD);
+    result->detected = (total_count >= TOTAL_THRESHOLD) &&
+                       (result->left || result->center || result->right);
+    result->line_y   = result->detected ? topmost_y : -1;
+
+    return result->detected;
+}
+
 bool findblobs(BlobDetection *result) {
     static const char *targets[] = {"RED", "BLUE", "GREEN", "YELLOW", "PURPLE"};
     const int target_count = (int)(sizeof(targets) / sizeof(targets[0]));

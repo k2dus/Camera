@@ -30,7 +30,7 @@ bool compass_get_magnetic(Compass *compass, ak8963_vector_t *magnetic) {
 }
 
 float compass_low_pass_filter(float previous, float value) {
-    return 0.55f * previous + 0.45f * value;
+    return 0.85f * previous + 0.15f * value;
 }
 
 bool compass_read_heading(Compass *compass, float *heading_degrees, float *heading_plus_declination_degrees) {

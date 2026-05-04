@@ -111,7 +111,7 @@ void scoop_down(Servo *servo){
     if (servo == NULL) {
         return;
     }
-    servo_move(servo, 40.0f);
+    servo_move(servo, 35.0f);
     sleep_ms(500);
 }
 

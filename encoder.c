@@ -70,7 +70,7 @@ int32_t encoder_delta(Encoder *encoder) {
 }
 
 int32_t encoder_delta_cm(Encoder *encoder) {
-    return encoder_delta(encoder) * 80 * M_PI / 1920; // Convert encoder ticks to centimeters
+    return encoder_delta(encoder) * 8 * M_PI / 1920; // Convert encoder ticks to centimeters
 }
 
 void encoder_reset(Encoder *encoder) {

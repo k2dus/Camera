@@ -2,6 +2,8 @@
 #include <stdlib.h>
 
 // ===== GLOBAL VARIABLE DEFINITIONS =====
+volatile int leftCount = 0;
+volatile int rightCount = 0;
 volatile int x_pos = 105;
 volatile int y_pos = 0;
 volatile int heading = 0;
@@ -9,6 +11,8 @@ int max_x = 205;
 int min_x = 10;
 int max_y = 245;
 int min_y = 0;
+float left_cm  = 0.0f;
+float right_cm = 0.0f;
 Encoder left_enc;
 Encoder right_enc;
 
@@ -95,6 +99,9 @@ Servo sorter;
 Servo chamber_stop;
 Compass compass;
 
+static HCSR04 dist_left_sensor;
+static HCSR04 dist_right_sensor;
+
 int enemy_goal_x = 105; // heading (degrees, 0-360) recorded at startup when facing enemy goal
 int enemy_goal_y = 365;
 int own_goal_x = 105;
@@ -107,6 +114,14 @@ int red_in_chamber = 0;
 
 void collisionDetected();
 
+// Poll both distance sensors sequentially. Returns true if both readings succeeded.
+bool read_distances_cm(float *left_cm, float *right_cm) {
+    bool left_ok  = hcsr04_distance_cm(&dist_left_sensor,  left_cm);
+    sleep_ms(10);
+    bool right_ok = hcsr04_distance_cm(&dist_right_sensor, right_cm);
+    return left_ok && right_ok;
+}
+
 void sleepcheck(int x){
     if (x <= 0) {
         return;
@@ -114,19 +129,23 @@ void sleepcheck(int x){
 
     int remaining_ms = x;
     while (remaining_ms > 0) {
-        if (COLLISION) {
+        read_distances_cm(&left_cm, &right_cm);
+        if ((left_cm < 10 || right_cm < 10)) {
             printf("collision");
-            collisionDetected();
+            collisionDetected();\
+            break;
         }
 
         //BOUNDARY CHECK
         
-        if ((x_pos < min_x && -90 < heading) || (x_pos > max_x && heading > 90)){
-            turn(normalize_heading(heading + 90));
-        }
-        else if ((x_pos < min_x && heading < -90) || (x_pos > max_x && heading < 90)){
-            turn(normalize_heading(heading - 90));
-        }
+        // if ((x_pos < min_x && -90 < heading) || (x_pos > max_x && heading > 90)){
+        //     printf("border trigger");
+        //     turn(normalize_heading(heading + 90));
+        // }
+        // else if ((x_pos < min_x && heading < -90) || (x_pos > max_x && heading < 90)){
+        //     printf("border trigger");
+        //     turn(normalize_heading(heading - 90));
+        // }
         
         int slice_ms = (remaining_ms > 100) ? 100 : remaining_ms;
         sleep_ms(slice_ms);
@@ -136,60 +155,74 @@ void sleepcheck(int x){
 
 
 #define DISTANCE_THRESHOLD_MM 100
+
 bool timer_callback(struct repeating_timer *t) {
     // This callback runs every 70ms to check if a collision has been detected via distance sensors
-    gpio_put(DIST_TRIGGER_PIN, true);
-    sleep_us(10);
-    gpio_put(DIST_TRIGGER_PIN, false);
-    heading = compass_get_relative_heading(&compass);
+    // gpio_put(DIST_TRIGGER_PIN, true);
+    // sleep_us(10);
+    // gpio_put(DIST_TRIGGER_PIN, false);
     
-    float delta_cm = (encoder_delta_cm(&left_enc) + encoder_delta_cm(&right_enc)) / 2.0f;
+    heading = compass_get_relative_heading(&compass);
+    float left_enc_del = -1 * encoder_delta_cm(&left_enc);
+    float right_enc_del = encoder_delta_cm(&right_enc);
+    float delta_cm = (left_enc_del + right_enc_del) / 2.0f;
     float heading_rad = heading * (float)M_PI / 180.0f;
+    leftCount += left_enc_del;
+    rightCount += right_enc_del;
     x_pos += (int)(delta_cm * cosf(heading_rad));
     y_pos += (int)(delta_cm * sinf(heading_rad));
     return true; // keep repeating
 }
 // GPIO interrupt handler for rear distance sensor (echo pin 26)
-void dist_callback(uint gpio, uint32_t events) {
-    if (events & GPIO_IRQ_EDGE_RISE) {
-        if (gpio == DIST_ECHO_PIN) {
-            pulse_start_left = time_us_64();
-        } else if (gpio == DIST_ECHO_PIN_RIGHT) {
-            pulse_start_right = time_us_64();
-        }
-        return;
-    }
+// void dist_callback(uint gpio, uint32_t events) {
+//     printf("10");
+//     if (events & GPIO_IRQ_EDGE_RISE) {
+//         printf("1");
+//         if (gpio == DIST_ECHO_PIN) {
+//             printf("2");
+//             pulse_start_left = time_us_64();
+//         } else if (gpio == DIST_ECHO_PIN_RIGHT) {
+//             printf("3");
+//             pulse_start_right = time_us_64();
+//         }
+//         return;
+//     } else if (events & GPIO_IRQ_EDGE_FALL) {
+//         printf("4");
+//         uint64_t start = (gpio == DIST_ECHO_PIN) ? pulse_start_left : pulse_start_right;
+//         if (start == 0) return;
+//         printf("5");
 
-    if (events & GPIO_IRQ_EDGE_FALL) {
-        uint64_t start = (gpio == DIST_ECHO_PIN) ? pulse_start_left : pulse_start_right;
-        if (start == 0) return;
-
-        uint64_t duration = time_us_64() - start;
-        int distance = (int)(((float)duration / 2.0f) / 29.1f);
-        if (gpio == DIST_ECHO_PIN) {
-            left_distance_cm = distance;
-            pulse_start_left = 0;
-            // printf("Left distance: %d cm\n", left_distance_cm);
-            if (distance < 15) {
-                L_collision_count++;
-                if(L_collision_count >= 2) {
-                    COLLISION = true;
-                    COLLISION_PIN = DIST_ECHO_PIN;
-                }
-            } else{ L_collision_count = 0;}
-        } else {
-            right_distance_cm = distance;
-            pulse_start_right = 0;
-            // printf("Right distance: %d cm\n", right_distance_cm);
-            if (distance < 15) {
-                if(R_collision_count >= 2) {
-                    COLLISION = true;
-                    COLLISION_PIN = DIST_ECHO_PIN_RIGHT;
-                }
-            } else { R_collision_count = 0;}
-        }
-    }
-}
+//         uint64_t duration = time_us_64() - start;
+//         int distance = (int)(((float)duration / 2.0f) / 29.1f);
+//         if (gpio == DIST_ECHO_PIN) {
+//             printf("6");
+//             left_distance_cm = distance;
+//             pulse_start_left = 0;
+//             printf("Left distance: %d cm\n", left_distance_cm);
+//             if (distance < 15) {
+//                 printf("7");
+//                 L_collision_count++;
+//                 if(L_collision_count >= 2) {
+//                     COLLISION = true;
+//                     COLLISION_PIN = DIST_ECHO_PIN;
+//                 }
+//             } else{ L_collision_count = 0;}
+//         } else {
+//             printf("8");
+//             right_distance_cm = distance;
+//             pulse_start_right = 0;
+//             printf("Right distance: %d cm\n", right_distance_cm);
+//             if (distance < 15) {
+//                 printf("9");
+//                 R_collision_count++;
+//                 if(R_collision_count >= 2) {
+//                     COLLISION = true;
+//                     COLLISION_PIN = DIST_ECHO_PIN_RIGHT;
+//                 }
+//             } else { R_collision_count = 0;}
+//         }
+//     }
+// }
 
 // // ===== HELPER FUNCTIONS =====
 // void init_pins() { //Initialize GPIO pins for encoders and motors
@@ -213,21 +246,12 @@ void dist_callback(uint gpio, uint32_t events) {
 
 // //----------------STATE MACHINES----------------------
 
-
-
-
-
-
 typedef void (*StateFunc)(void);
 StateFunc current_state;
 
 
 static const char *captured_ball_label = NULL;
 static int chamber_ball_count = 0;
-
-
-
-
 
 // Forward declarations
 void state_initial(void);
@@ -271,29 +295,34 @@ int angle_diff(int target, int current) {
 
 void turn(float desiredHeading) {
     while (1) {
+        //printf("xpos: %d", x_pos);
+        //printf("ypos: %d", y_pos);
+        printf("heading: %f \n", compass_get_relative_heading(&compass));
         int current = compass_get_relative_heading(&compass);
+        //printf("current: %d:", current);
         int diff = angle_diff(desiredHeading, current);
+        //printf("diff: %d", diff);
 
-        if (abs(diff) <= 5) {
+        if (abs(diff) <= 10) {
             break; // close enough
         }
         if (diff > 0) {
             // turn RIGHT
             pwm_set_gpio_level(LREV_MOTOR, 0);
-            pwm_set_gpio_level(LFWD_MOTOR, 15000);
+            pwm_set_gpio_level(LFWD_MOTOR, 100);
             pwm_set_gpio_level(RFWD_MOTOR, 0);
-            pwm_set_gpio_level(RREV_MOTOR, 15000);
+            pwm_set_gpio_level(RREV_MOTOR, 100);
         } else {
             // turn LEFT
-            pwm_set_gpio_level(LREV_MOTOR, 15000);
+            pwm_set_gpio_level(LREV_MOTOR, 100);
             pwm_set_gpio_level(LFWD_MOTOR, 0);
-            pwm_set_gpio_level(RFWD_MOTOR, 15000);
+            pwm_set_gpio_level(RFWD_MOTOR, 100);
             pwm_set_gpio_level(RREV_MOTOR, 0);
         }
 
         sleep_ms(15);
     }
-
+    printf("STOP ALL THE MOTORS PLEASE PLEASE PLEASE PLEASe");
     // STOP motors
     pwm_set_gpio_level(LREV_MOTOR, 0);
     pwm_set_gpio_level(LFWD_MOTOR, 0);
@@ -351,24 +380,9 @@ void initializeEverything() {
     gpio_pull_up(BEAM_SENSOR_PIN);
 
 
-    //TRIGGER PIN FOR DISTANCE SENSOR INTERRUPT SETUP
-    gpio_init(DIST_TRIGGER_PIN);
-    gpio_set_dir(DIST_TRIGGER_PIN, GPIO_OUT);
-    gpio_put(DIST_TRIGGER_PIN, false);
-   
-    // DISTANCE SENSOR INTERRUPT SETUP - collision detection
-    gpio_init(DIST_ECHO_PIN);
-    gpio_set_dir(DIST_ECHO_PIN, GPIO_IN);
-    gpio_pull_down(DIST_ECHO_PIN);
-    gpio_set_irq_enabled_with_callback(DIST_ECHO_PIN, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &dist_callback);
-   
-    gpio_init(DIST_ECHO_PIN_RIGHT);
-    gpio_set_dir(DIST_ECHO_PIN_RIGHT, GPIO_IN);
-    gpio_pull_down(DIST_ECHO_PIN_RIGHT);
-    gpio_set_irq_enabled_with_callback(DIST_ECHO_PIN_RIGHT, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &dist_callback);
-   
-    printf("Distance collision detection active - threshold: %d mm\n", DISTANCE_THRESHOLD_MM);
-
+    // Distance sensor polling init (no interrupts)
+    hcsr04_init(&dist_left_sensor,  DIST_TRIGGER_PIN, DIST_ECHO_PIN,       0);
+    hcsr04_init(&dist_right_sensor, DIST_TRIGGER_PIN, DIST_ECHO_PIN_RIGHT, 0);
 
     // COLOR SENSOR INIT
     if (!tcs34725_init(&sensor, COLOR_I2C_PORT, COLOR_SENSOR_ADDR)) {
@@ -405,6 +419,18 @@ void initializeEverything() {
         .z = 0.944f
     };
     const float lubbock_declination_deg = -5.44f;
+    // printf("Starting calibration — rotate robot slowly 360+ degrees...\n");
+    // ak8963_vector_t cal_offset, cal_scale;
+    // printf("begin soon");
+    // sleep_ms(5000);
+    // if (compass_calibrate(&compass, &cal_offset, &cal_scale)) {
+    //     printf("COMPASS_OFFSET x=%.3f  y=%.3f  z=%.3f\n",
+    //         cal_offset.x, cal_offset.y, cal_offset.z);
+    //     printf("COMPASS_SCALE  x=%.3f  y=%.3f  z=%.3f\n",
+    //         cal_scale.x, cal_scale.y, cal_scale.z);
+    // } else {
+    //     printf("Calibration failed\n");
+    // }
     bool compass_ok = compass_init(&compass, COLOR_I2C_PORT, lubbock_declination_deg);
 
     if (compass_apply_calibration(&compass, COMPASS_OFFSET, COMPASS_SCALE)) {
@@ -442,8 +468,6 @@ void initializeEverything() {
     printf("Cam init done\n");
     printf("Camera initialized...\n");
 
-    add_repeating_timer_ms(-100, timer_callback, NULL, &timer);
-
     // gpio_init(LFWD_MOTOR);
     // gpio_set_dir(LFWD_MOTOR, GPIO_OUT);
     // gpio_put(LFWD_MOTOR, false);
@@ -461,25 +485,23 @@ void initializeEverything() {
     // gpio_put(RREV_MOTOR, false);
     encoder_init(&left_enc, LChannelA, LChannelB);
     encoder_init(&right_enc, RChannelA, RChannelB);
+
+    add_repeating_timer_ms(-100, timer_callback, NULL, &timer);
 }
+
 void collisionDetected() {
-    if(COLLISION_PIN == DIST_ECHO_PIN) {
-        printf("Collision detected on LEFT sensor: %d cm\n", left_distance_cm);
-    } else {
-        printf("Collision detected on RIGHT sensor: %d cm\n", right_distance_cm);
-    }
+    printf("Collision detected on LEFT sensor: %d cm\n", left_cm);
+    printf("Collision detected on RIGHT sensor: %d cm\n", right_cm);
     motor_noencoder_move(&motor, .5, false, false); // Back up a little
     sleep_ms(500);
     motor_noencoder_stop_all(&motor);
-    COLLISION = false;
-
-
 }
+
 void rightPivot() {
     motor_noencoder_move(&motor, .5, true, false); // R1
-    sleepcheck(350);
+    sleep_ms(250);
     motor_noencoder_stop_all(&motor);
-    sleepcheck(50);
+    sleep_ms(50);
     encoder_delta(&left_enc);
     encoder_delta(&right_enc);
 }
@@ -492,7 +514,7 @@ void state_capture(void) { //Search and Capture
     //SEARCHING
     while (!found || !is_ball(blob.label)) {
 
-
+        printf("begin");
         gpio_put(GREENFLYWHEEL, 1);
         gpio_put(REDFLYWHEEL, 1);
         // gpio_put(GREENFLYWHEEL, 1);
@@ -520,7 +542,7 @@ void state_capture(void) { //Search and Capture
        
         printf("turn LEFT");
         motor_noencoder_move(&motor, .5, false, true);
-        sleepcheck(750);
+        sleepcheck(500);
         motor_noencoder_stop_all(&motor);
         if (findblobs(&blob) && is_ball(blob.label)) {
             printf("ball found: %s\n", blob.label);
@@ -563,10 +585,36 @@ void state_capture(void) { //Search and Capture
         }
         if (gpio_get(BEAM_SENSOR_PIN) == 0) { break; }
 
+        rightPivot();
+        if (findblobs(&blob) && is_ball(blob.label)) {
+            printf("ball found: %s\n", blob.label);
+            break;
+        }
+        if (gpio_get(BEAM_SENSOR_PIN) == 0) { break; }
 
+        rightPivot();
+        if (findblobs(&blob) && is_ball(blob.label)) {
+            printf("ball found: %s\n", blob.label);
+            break;
+        }
+        if (gpio_get(BEAM_SENSOR_PIN) == 0) { break; }
+
+        //One left Pivot
+        motor_noencoder_move(&motor, .5, false, true); // R1
+        sleepcheck(350);
+        motor_noencoder_stop_all(&motor);
+        sleepcheck(50);
+        encoder_delta(&left_enc);
+        encoder_delta(&right_enc);
+        if(findblobs(&blob) && is_ball(blob.label)) {
+            printf("ball found %s\n", blob.label);
+            break;
+        }
+        if (gpio_get(BEAM_SENSOR_PIN) == 0) { break; }
         // Search motor run stuff
     }
-   
+    time_t seconds;
+    seconds = time(NULL);
     motor_noencoder_stop_all(&motor); // STOP ALL
     sleepcheck(500); //Prepare to attack
 
@@ -574,37 +622,27 @@ void state_capture(void) { //Search and Capture
     //Move towards the ball until the beam is broken
     tcs34725_raw_data_t data;
     bool moving = true;
-    time_t seconds;
     int retc = tcs34725_read_raw(&sensor, &data);
     const char *detected = tcs34725_detect_color_from_raw(&data);
     printf("get that thing fr ");
-    while(COLLISION) {
-        collisionDetected();
-    }
-    motor_noencoder_move(&motor, .4, true, true);
    
     // CAPTURE THE BALL
-    while(moving){
-        if(COLLISION) {
-            collisionDetected();
-            break;
-        }
+    while(moving && time(NULL) - seconds < 7){
+        motor_noencoder_move(&motor, .4, true, true);
         beam_broken = gpio_get(BEAM_SENSOR_PIN) == 0;
         tcs34725_raw_data_t data;
         int retc = tcs34725_read_raw(&sensor, &data);
         const char *detected = tcs34725_detect_color_from_raw(&data);
         printf("driving towards target\n");
-        sleep_ms(50);
+        sleepcheck(50);
         if (beam_broken && !beam_was_broken) { //STOP MOVING, READ
-            sleepcheck(250);
+            sleep_ms(250);
             printf("Beam broken\n");
             scoop_up(&scoop);
-            seconds = time(NULL);
-            sleepcheck(1000);
+            sleep_ms(1000);
             motor_noencoder_move(&motor, 0, false, false);
             moving = false;
             printf("the search is over.... Yurah");
-
 
             while (detected == NULL && time(NULL) - seconds < 5) {
                 retc = tcs34725_read_raw(&sensor, &data);
@@ -622,33 +660,35 @@ void state_capture(void) { //Search and Capture
                 }
             }
             scoop_down(&scoop);
-        // TEST FLY
-            if(red_in_chamber >=1) {
-                gpio_put(GREENFLYWHEEL, 0);
-                gpio_put(REDFLYWHEEL, 1);
-                sleep_ms(4000);
-                servo_chamber_redpass(&chamber_stop);
-                sleep_ms(8000);
-                servo_chamber_center(&chamber_stop);
-                gpio_put(REDFLYWHEEL, 0); // Shut flywheel back off
-                red_in_chamber = 0;
-            } else if(gb_in_chamber >= 1) {
-                gpio_put(REDFLYWHEEL, 0);
-                gpio_put(GREENFLYWHEEL, 1);
-                sleep_ms(4000);
-                servo_chamber_gbpass(&chamber_stop);
-                sleep_ms(8000);
-                servo_chamber_center(&chamber_stop);
-                gpio_put(GREENFLYWHEEL, 0);
-                gb_in_chamber = 0;
-            }
-
             printf("while loop over");
+            sleep_ms(500);
         }
         beam_was_broken = beam_broken;
-        // Insert check for transition to deposit state
-    } motor_noencoder_move(&motor, 0, false, false);
+    } 
+    
+    motor_noencoder_move(&motor, 0, false, false);
+    
+    // turn(scoreheading);
+    
+    gpio_put(GREENFLYWHEEL, 1);
+    gpio_put(REDFLYWHEEL, 0);
+    sleep_ms(4000);
+    servo_chamber_redpass(&chamber_stop);
+    sleep_ms(8000);
+    servo_chamber_center(&chamber_stop);
+    gpio_put(REDFLYWHEEL, 1); // Shut flywheel back off
+    red_in_chamber = 0;
+    sleepcheck(500);
+    // turn(scoreheading);
 
+    gpio_put(REDFLYWHEEL, 1);
+    gpio_put(GREENFLYWHEEL, 0);
+    sleep_ms(4000);
+    servo_chamber_gbpass(&chamber_stop);
+    sleep_ms(8000);
+    servo_chamber_center(&chamber_stop);
+    gpio_put(GREENFLYWHEEL, 1);
+    gb_in_chamber = 0;
 
 }
 // Returns the smallest angular difference between two headings (0-360), range [0, 180]
@@ -658,56 +698,46 @@ float heading_diff(float a, float b) {
     return d;
 }
 
-void state_deposit(void) { // SCORE red or green
-
-    while(red_in_chamber > 0 || gb_in_chamber > 0){
-        if(red_in_chamber >= 1){
-            double scoreheading = atan((enemy_goal_x - x_pos)/(enemy_goal_y - y_pos));
-            printf("score heading: %f", scoreheading);
-            turn(scoreheading);
-            
-            gpio_put(GREENFLYWHEEL, 1);
-            gpio_put(REDFLYWHEEL, 0);
-            sleep_ms(4000);
-            servo_chamber_redpass(&chamber_stop);
-            sleep_ms(8000);
-            servo_chamber_center(&chamber_stop);
-            gpio_put(REDFLYWHEEL, 1); // Shut flywheel back off
-            red_in_chamber = 0;
-        }
-        if(gb_in_chamber >= 1){
-            double scoreheading = atan((own_goal_x - x_pos)/(own_goal_y - y_pos));
-            printf("score heading: %f", scoreheading);
-            turn(scoreheading);
-
-            gpio_put(REDFLYWHEEL, 1);
-            gpio_put(GREENFLYWHEEL, 0);
-            sleep_ms(4000);
-            servo_chamber_gbpass(&chamber_stop);
-            sleep_ms(8000);
-            servo_chamber_center(&chamber_stop);
-            gpio_put(GREENFLYWHEEL, 1);
-            gb_in_chamber = 0;
-        }
-    }
-    
-    current_state = state_capture; // Back to search & capture state
-}
-
 int main() {
     
     // FLYWHEEL INIT
     
     // Initialize hardware
     initializeEverything();
-    // Initialize state machine
+
+    scoop_down(&scoop);
+    servo_chamber_center(&chamber_stop);
+    servo_sort("RED");
     current_state = state_capture;
     while(current_state) {
         current_state();
     }
-    printf("SERVO TEST TEST TEST");
-    
-    
+    // --- BLACK LINE DETECTION TEST ---
+    // Comment this block out and restore the state machine when done testing.
+    // while (true) {
+    //     LineDetection line;
+    //     detect_boundary_line(&line);
+    //     if (line.detected) {
+    //         printf("BLACK LINE DETECTED | left=%d center=%d right=%d | top_row=%d\n",
+    //                line.left, line.center, line.right, line.line_y);
+    //     } else {
+    //         printf("no line\n");
+    //     }
+    //     sleep_ms(200);
+    // }
+    // --- END TEST (restore below for normal operation) ---
+    // current_state = state_capture;
+    // while(current_state) { current_state(); }
+    // while (true) {
+        
+    //     if (read_distances_cm(&left_cm, &right_cm)) {
+    //         printf("dist L=%.1f cm  R=%.1f cm\n", left_cm, right_cm);
+    //     } else {
+    //         printf("dist timeout\n");
+    //     }
+    //     sleep_ms(100);
+    // }
+
     // Main loop
     // while (true) {
     //     //run the current state

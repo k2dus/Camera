@@ -51,11 +51,26 @@ bool hcsr04_distance_mm(HCSR04 *sensor, long *distance_mm) {
 }
 
 bool hcsr04_distance_cm(HCSR04 *sensor, float *distance_cm) {
-    long pulse_time_us = 0;
-    if (!hcsr04_send_pulse_and_wait(sensor, &pulse_time_us)) {
-        return false;
+    #define HCSR04_SAMPLES        2
+    #define HCSR04_MIN_VALID_CM   2.0f
+
+    float sum = 0.0f;
+    int valid = 0;
+
+    for (int i = 0; i < HCSR04_SAMPLES; i++) {
+        long pulse_time_us = 0;
+        if (!hcsr04_send_pulse_and_wait(sensor, &pulse_time_us)) {
+            continue;
+        }
+        float reading = ((float)pulse_time_us / 2.0f) / 29.1f;
+        if (reading >= HCSR04_MIN_VALID_CM) {
+            sum += reading;
+            valid++;
+        }
+        sleep_us(500); // brief gap between pulses
     }
 
-    *distance_cm = ((float)pulse_time_us / 2.0f) / 29.1f;
+    if (valid == 0) return false;
+    *distance_cm = sum / (float)valid;
     return true;
 }

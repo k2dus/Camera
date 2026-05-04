@@ -29,6 +29,8 @@
 #include "servo.h"
 
 // // ===== GLOBAL STATE =====
+extern volatile int leftCount;
+extern volatile int rightCount;
 extern volatile int x_pos; // starting position: middle of field
 extern volatile int y_pos;
 extern volatile int heading;

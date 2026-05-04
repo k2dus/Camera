@@ -143,4 +143,7 @@ void motor_noencoder_move(MotorNoEncoder *motor, float speed, bool left_directio
     motor->has_last_dir = true;
     printf("xpos: %d"
            "ypos: %d", x_pos, y_pos);
+    printf("left count: %d", leftCount);
+    printf("right count: %d,", rightCount);
+    printf("heading %d", heading);
 }
